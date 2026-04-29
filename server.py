@@ -6,12 +6,15 @@ import shutil
 import sqlite3
 import threading
 import time
+import base64
+import mimetypes
 from pathlib import Path
 from typing import Any
 
 import httpx
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
+from openai import OpenAI
 
 load_dotenv()
 
@@ -128,6 +131,43 @@ def move_file(source_path: str, destination_path: str) -> str:
 
 
 @mcp.tool()
+def move_files_by_glob(source_dir: str, pattern: str, destination_dir: str) -> str:
+    """Move all files matching a glob pattern from source_dir into destination_dir."""
+    source_root = _resolve_file_ops_path(source_dir)
+    destination_root = _resolve_file_ops_path(destination_dir)
+
+    if not source_root.is_dir():
+        raise ValueError(f"Source directory does not exist: {source_root}")
+
+    destination_root.mkdir(parents=True, exist_ok=True)
+
+    moved: list[str] = []
+    skipped: list[str] = []
+    for source in sorted(source_root.glob(pattern)):
+        if not source.is_file():
+            continue
+
+        destination = destination_root / source.name
+        if destination.exists():
+            skipped.append(source.name)
+            continue
+
+        shutil.move(str(source), str(destination))
+        moved.append(source.name)
+
+    summary = {
+        "source_dir": str(source_root),
+        "destination_dir": str(destination_root),
+        "pattern": pattern,
+        "moved_count": len(moved),
+        "skipped_existing_count": len(skipped),
+        "moved_files": moved,
+        "skipped_existing_files": skipped,
+    }
+    return json.dumps(summary, indent=2)
+
+
+@mcp.tool()
 def list_files(path: str = ".") -> str:
     """List files directly inside a folder within MCP_FILE_OPS_ROOT."""
     target = _resolve_file_ops_path(path)
@@ -156,6 +196,73 @@ def read_file(path: str) -> str:
     if not target.is_file():
         raise ValueError(f"File does not exist: {target}")
     return target.read_text(encoding="utf-8")
+
+
+@mcp.tool()
+def inspect_file(path: str, preview_chars: int = 4000, include_base64: bool = False) -> str:
+    """Return file metadata and content preview for text/csv/image workflows."""
+    target = _resolve_file_ops_path(path)
+    if not target.is_file():
+        raise ValueError(f"File does not exist: {target}")
+
+    mime_type, _ = mimetypes.guess_type(str(target))
+    if not mime_type:
+        mime_type = "application/octet-stream"
+
+    raw = target.read_bytes()
+    result: dict[str, Any] = {
+        "path": str(target),
+        "name": target.name,
+        "size_bytes": len(raw),
+        "mime_type": mime_type,
+    }
+
+    if mime_type.startswith("text/") or mime_type in {"application/json", "text/csv"}:
+        text = raw.decode("utf-8", errors="replace")
+        result["text_preview"] = text[:preview_chars]
+        result["text_preview_truncated"] = len(text) > preview_chars
+    elif mime_type.startswith("image/"):
+        result["image_note"] = "Use analyze_image_with_openai for model vision interpretation."
+
+    if include_base64:
+        result["base64"] = base64.b64encode(raw).decode("ascii")
+
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def analyze_image_with_openai(path: str, prompt: str, model: str = "gpt-4.1-mini") -> str:
+    """Analyze an image file with an OpenAI vision-capable model."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY is not configured.")
+
+    target = _resolve_file_ops_path(path)
+    if not target.is_file():
+        raise ValueError(f"File does not exist: {target}")
+
+    mime_type, _ = mimetypes.guess_type(str(target))
+    if not mime_type or not mime_type.startswith("image/"):
+        raise ValueError(f"File is not an image: {target}")
+
+    image_bytes = target.read_bytes()
+    image_b64 = base64.b64encode(image_bytes).decode("ascii")
+    data_url = f"data:{mime_type};base64,{image_b64}"
+
+    client = OpenAI(api_key=api_key)
+    response = client.responses.create(
+        model=model,
+        input=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": prompt},
+                    {"type": "input_image", "image_url": data_url},
+                ],
+            }
+        ],
+    )
+    return response.output_text
 
 
 def main() -> None:
