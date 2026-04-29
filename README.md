@@ -99,6 +99,14 @@ MCP_TRANSPORT=streamable-http MCP_HOST=127.0.0.1 MCP_PORT=8000 MCP_PATH=/mcp mcp
 python client_openai_api.py
 ```
 
+4. Launch the web chat UI (optional):
+
+```bash
+streamlit run web_client.py
+```
+
+This interface keeps chat history in the browser session, so each new question includes prior turns for conversation context.
+
 > Note: the client uses OpenAI Responses API with an MCP tool definition pointing at `MCP_SERVER_URL`
 > (default: `http://127.0.0.1:8000/mcp`). You can override this for custom host/port/path.
 
