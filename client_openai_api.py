@@ -39,7 +39,7 @@ def main() -> None:
             tools=[
                 {
                     "type": "mcp",
-                    "server_label": "local-mcp-demo",
+                    "server_label": "mcp-server-demo",
                     "server_url": server_url,
                     "require_approval": "never",
                 }
