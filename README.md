@@ -40,14 +40,15 @@ The server also creates `demo.db` automatically with sample rows.
 
 ## 3) Manual checks
 
-### A) Basic endpoint reachability
+### A) Basic endpoint reachability (transport/session behavior)
 
 ```bash
 curl -i -H "Accept: text/event-stream" http://127.0.0.1:8000/mcp
 ```
 
-`streamable-http` requires an SSE-capable `Accept` header on `GET`.
-If you call without that header, a `406 Not Acceptable` is expected.
+`streamable-http` requires an SSE-capable `Accept` header on `GET`, **and** the server expects
+an MCP session id for ongoing calls. A plain `GET` can return `400 Bad Request` with
+`"Missing session ID"`; this is normal for session-based transports and means the server is up.
 
 ### B) Protocol-level test (recommended)
 
@@ -58,6 +59,25 @@ npx @modelcontextprotocol/inspector
 ```
 
 Connect to your local Python server and confirm `weather` and `query_db` are listed.
+
+### C) If using OpenAI-hosted Responses API
+
+If you run `python client_openai_api.py` against `http://127.0.0.1:8000/mcp`, OpenAI-hosted
+infrastructure cannot reach your machine's loopback interface. In that case you should expose
+the local server with a tunnel and point `MCP_SERVER_URL` to that public URL.
+
+Example:
+
+```bash
+# terminal 1
+MCP_TRANSPORT=streamable-http MCP_HOST=0.0.0.0 MCP_PORT=8000 MCP_PATH=/mcp mcp-server-demo
+
+# terminal 2 (example tunnel command; choose your preferred provider)
+ngrok http 8000
+
+# terminal 3
+MCP_SERVER_URL=https://<your-public-url>/mcp python client_openai_api.py
+```
 
 ## 4) OpenAI API integration option
 
