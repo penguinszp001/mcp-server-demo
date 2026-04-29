@@ -22,9 +22,12 @@ pip install -e .
 ```bash
 cp .env.example .env
 ```
+Fill in your OPENAI_API_KEY and keep MCP_DEMO_DB_PATH=demo.db
 
-4) If you plan to expose your local MCP server publicly, make sure your ngrok account is set up and authenticated first.
+You will fill out the MCP_SERVER_URL in a later step
 
+4) If you plan to expose your local MCP server publicly, make sure ngrok is installed `sudo snap install ngrok` and your account is set up and authenticated first. You can set up an account for free.
+Once set up, add token using terminal `ngrok config add-authtoken <AUTHTOKEN>` You can find the token on `https://dashboard.ngrok.com/get-started/your-authtoken`
 5) Start the MCP server (HTTP transport).
 
 ```bash
@@ -36,12 +39,16 @@ MCP_TRANSPORT=streamable-http MCP_HOST=0.0.0.0 MCP_PORT=8000 MCP_PATH=/mcp mcp-s
 ```bash
 ngrok http 8000
 ```
+Once you have ngrok running, you need to update MCP_SERVER_URL in your .env file
+use the address from 'Forwarding'. Your .env will now look like `MCP_SERVER_URL=<Full forwarding Address>/mcp`
 
 7) (Optional) In another terminal, run MCP Inspector.
 
 ```bash
 npx @modelcontextprotocol/inspector
 ```
+It should open up a web browser. In the left hand panel update Command to be `mcp-server-demo`
+Press connect. You can select "tools" in the top menu to test the available tools and see history and notifications at the bottom of the page
 
 8) (Optional) Launch the Streamlit client.
 
