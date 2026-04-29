@@ -43,10 +43,11 @@ The server also creates `demo.db` automatically with sample rows.
 ### A) Basic endpoint reachability
 
 ```bash
-curl -i http://127.0.0.1:8000/mcp
+curl -i -H "Accept: text/event-stream" http://127.0.0.1:8000/mcp
 ```
 
-If your server is running in HTTP mode, you should get an HTTP response (status may vary by MCP implementation/version).
+`streamable-http` requires an SSE-capable `Accept` header on `GET`.
+If you call without that header, a `406 Not Acceptable` is expected.
 
 ### B) Protocol-level test (recommended)
 
@@ -85,6 +86,8 @@ If you get an MCP tool-list retrieval error from OpenAI:
 - Ensure your server is running in **streamable-http** mode (not stdio mode).
 - Ensure host/port/path match exactly in both terminals.
 - Prefer `127.0.0.1` over `localhost` to avoid loopback resolution mismatches.
+- If your call is made by OpenAI's hosted API, `127.0.0.1` is not reachable from OpenAI.
+  Use a publicly reachable URL (for example, via a tunnel) and set `MCP_SERVER_URL`.
 
 ## Tool behavior
 
