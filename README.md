@@ -29,6 +29,9 @@ This mode is best for local tool-host integrations that launch your server proce
 MCP_TRANSPORT=streamable-http MCP_HOST=127.0.0.1 MCP_PORT=8000 MCP_PATH=/mcp mcp-server-demo
 ```
 
+You should immediately see startup logs, then a periodic health heartbeat every 30 seconds by default.
+Set `MCP_HEARTBEAT_SECONDS=0` to disable heartbeats.
+
 This starts an HTTP MCP endpoint at:
 
 `http://127.0.0.1:8000/mcp`
@@ -75,7 +78,13 @@ MCP_TRANSPORT=streamable-http MCP_HOST=127.0.0.1 MCP_PORT=8000 MCP_PATH=/mcp mcp
 python client_openai_api.py
 ```
 
-> Note: the client uses OpenAI Responses API with an MCP tool definition pointing at `http://localhost:8000/mcp`.
+> Note: the client uses OpenAI Responses API with an MCP tool definition pointing at `MCP_SERVER_URL`
+> (default: `http://127.0.0.1:8000/mcp`). You can override this for custom host/port/path.
+
+If you get an MCP tool-list retrieval error from OpenAI:
+- Ensure your server is running in **streamable-http** mode (not stdio mode).
+- Ensure host/port/path match exactly in both terminals.
+- Prefer `127.0.0.1` over `localhost` to avoid loopback resolution mismatches.
 
 ## Tool behavior
 

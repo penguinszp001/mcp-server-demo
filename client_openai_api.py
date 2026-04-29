@@ -21,6 +21,9 @@ def main() -> None:
         raise RuntimeError("Set OPENAI_API_KEY in your environment or .env file.")
 
     client = OpenAI(api_key=api_key)
+    server_url = os.getenv("MCP_SERVER_URL", "http://127.0.0.1:8000/mcp")
+
+    print(f"Using MCP server URL: {server_url}")
 
     response = client.responses.create(
         model="gpt-4.1-mini",
@@ -29,7 +32,7 @@ def main() -> None:
             {
                 "type": "mcp",
                 "server_label": "local-mcp-demo",
-                "server_url": "http://localhost:8000/mcp",
+                "server_url": server_url,
                 "require_approval": "never",
             }
         ],
