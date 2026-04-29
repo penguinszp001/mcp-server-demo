@@ -1,121 +1,76 @@
 # MCP Server Demo (Python)
 
-A from-scratch local MCP server with two tools:
-- `weather(city)` → current weather via wttr.in
-- `query_db(sql)` → read-only SQLite SELECT query
+## Quickstart (local run)
 
-## 1) Setup
+1) Create and activate a virtual environment.
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
+```
+
+2) Install Python dependencies.
+
+```bash
 pip install -U pip
+pip install -r requirements.txt
 pip install -e .
 ```
 
-## 2) Run the MCP server
-
-### Option A: stdio mode (default)
-
-```bash
-mcp-server-demo
-```
-
-This mode is best for local tool-host integrations that launch your server process directly.
-
-### Option B: HTTP mode (for manual testing via `curl`)
-
-```bash
-MCP_TRANSPORT=streamable-http MCP_HOST=127.0.0.1 MCP_PORT=8000 MCP_PATH=/mcp mcp-server-demo
-```
-
-You should immediately see startup logs, then a periodic health heartbeat every 30 seconds by default.
-Set `MCP_HEARTBEAT_SECONDS=0` to disable heartbeats.
-
-This starts an HTTP MCP endpoint at:
-
-`http://127.0.0.1:8000/mcp`
-
-The server also creates `demo.db` automatically with sample rows.
-
-## 3) Manual checks
-
-### A) Basic endpoint reachability (transport/session behavior)
-
-```bash
-curl -i -H "Accept: text/event-stream" http://127.0.0.1:8000/mcp
-```
-
-`streamable-http` requires an SSE-capable `Accept` header on `GET`, **and** the server expects
-an MCP session id for ongoing calls. A plain `GET` can return `400 Bad Request` with
-`"Missing session ID"`; this is normal for session-based transports and means the server is up.
-
-### B) Protocol-level test (recommended)
-
-Use MCP Inspector to verify tools and invoke them:
-
-```bash
-npx @modelcontextprotocol/inspector
-```
-
-Connect to your local Python server and confirm `weather` and `query_db` are listed.
-
-### C) If using OpenAI-hosted Responses API
-
-If you run `python client_openai_api.py` against `http://127.0.0.1:8000/mcp`, OpenAI-hosted
-infrastructure cannot reach your machine's loopback interface. In that case you should expose
-the local server with a tunnel and point `MCP_SERVER_URL` to that public URL.
-
-Example:
-
-```bash
-# terminal 1
-MCP_TRANSPORT=streamable-http MCP_HOST=0.0.0.0 MCP_PORT=8000 MCP_PATH=/mcp mcp-server-demo
-
-# terminal 2 (example tunnel command; choose your preferred provider)
-ngrok http 8000
-
-# terminal 3
-MCP_SERVER_URL=https://<your-public-url>/mcp python client_openai_api.py
-```
-
-## 4) OpenAI API integration option
-
-1. Copy env file and fill key:
+3) Set up environment variables.
 
 ```bash
 cp .env.example .env
 ```
 
-2. Start the server in HTTP mode:
+4) If you plan to expose your local MCP server publicly, make sure your ngrok account is set up and authenticated first.
+
+5) Start the MCP server (HTTP transport).
 
 ```bash
-MCP_TRANSPORT=streamable-http MCP_HOST=127.0.0.1 MCP_PORT=8000 MCP_PATH=/mcp mcp-server-demo
+MCP_TRANSPORT=streamable-http MCP_HOST=0.0.0.0 MCP_PORT=8000 MCP_PATH=/mcp mcp-server-demo
 ```
 
-3. In a second terminal, run:
+6) In a new terminal, start ngrok.
 
 ```bash
-python client_openai_api.py
+ngrok http 8000
 ```
 
-4. Launch the web chat UI (optional):
+7) (Optional) In another terminal, run MCP Inspector.
+
+```bash
+npx @modelcontextprotocol/inspector
+```
+
+8) (Optional) Launch the Streamlit client.
 
 ```bash
 streamlit run web_client.py
 ```
 
-This interface keeps chat history in the browser session, so each new question includes prior turns for conversation context.
+---
 
-> Note: the client uses OpenAI Responses API with an MCP tool definition pointing at `MCP_SERVER_URL`
-> (default: `http://127.0.0.1:8000/mcp`). You can override this for custom host/port/path.
+A from-scratch local MCP server with two tools:
+- `weather(city)` → current weather via wttr.in
+- `query_db(sql)` → read-only SQLite SELECT query
 
-If you get an MCP tool-list retrieval error from OpenAI:
-- Ensure your server is running in **streamable-http** mode (not stdio mode).
-- Ensure host/port/path match exactly in both terminals.
-- Prefer `127.0.0.1` over `localhost` to avoid loopback resolution mismatches.
-- If your call is made by OpenAI's hosted API, `127.0.0.1` is not reachable from OpenAI.
-  Use a publicly reachable URL (for example, via a tunnel) and set `MCP_SERVER_URL`.
+## Notes
+
+- Default local MCP endpoint is: `http://127.0.0.1:8000/mcp`
+- The server creates `demo.db` automatically with sample rows.
+- `npx` requires Node.js/npm installed locally.
+- `streamlit` is included in `requirements.txt`.
+
+## OpenAI API integration option
+
+1. Ensure `.env` includes your key and MCP server URL.
+2. Start server in HTTP mode.
+3. Run:
+
+```bash
+python client_openai_api.py
+```
 
 ## Tool behavior
 
@@ -131,4 +86,6 @@ Returns JSON summary fields including temperature, feels-like, humidity, wind, a
 
 - `server.py` — FastMCP server + tool definitions.
 - `client_openai_api.py` — simple OpenAI API call that can invoke MCP tools.
-- `pyproject.toml` — dependencies + script entrypoint.
+- `web_client.py` — Streamlit chat client.
+- `pyproject.toml` — package metadata + script entrypoint.
+- `requirements.txt` — pinned runtime dependencies for local setup.
