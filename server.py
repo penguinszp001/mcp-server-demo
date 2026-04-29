@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +19,7 @@ MCP_TRANSPORT = os.getenv("MCP_TRANSPORT", "stdio")
 MCP_HOST = os.getenv("MCP_HOST", "127.0.0.1")
 MCP_PORT = int(os.getenv("MCP_PORT", "8000"))
 MCP_PATH = os.getenv("MCP_PATH", "/mcp")
+HEARTBEAT_SECONDS = int(os.getenv("MCP_HEARTBEAT_SECONDS", "30"))
 
 mcp = FastMCP("local-mcp-demo")
 
@@ -85,9 +88,33 @@ def query_db(sql: str) -> str:
 def main() -> None:
     _bootstrap_db()
 
-    if MCP_TRANSPORT == "streamable-http":
+    transport = MCP_TRANSPORT
+    print(f"[mcp-server-demo] Bootstrapped database at: {DB_PATH.resolve()}", flush=True)
+
+    if transport == "streamable-http":
+        print(
+            f"[mcp-server-demo] Starting streamable-http MCP server at "
+            f"http://{MCP_HOST}:{MCP_PORT}{MCP_PATH}",
+            flush=True,
+        )
+
+        if HEARTBEAT_SECONDS > 0:
+            def _heartbeat() -> None:
+                while True:
+                    print(
+                        f"[mcp-server-demo] healthy: transport=streamable-http "
+                        f"url=http://{MCP_HOST}:{MCP_PORT}{MCP_PATH}",
+                        flush=True,
+                    )
+                    time.sleep(HEARTBEAT_SECONDS)
+
+            threading.Thread(target=_heartbeat, daemon=True).start()
+
         mcp.run(transport="streamable-http", host=MCP_HOST, port=MCP_PORT, path=MCP_PATH)
         return
+
+    print("[mcp-server-demo] Starting stdio MCP server.", flush=True)
+    print("[mcp-server-demo] Note: OpenAI HTTP client example requires streamable-http mode.", flush=True)
 
     mcp.run()
 
