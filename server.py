@@ -21,7 +21,12 @@ MCP_PORT = int(os.getenv("MCP_PORT", "8000"))
 MCP_PATH = os.getenv("MCP_PATH", "/mcp")
 HEARTBEAT_SECONDS = int(os.getenv("MCP_HEARTBEAT_SECONDS", "30"))
 
-mcp = FastMCP("local-mcp-demo")
+mcp = FastMCP(
+    "local-mcp-demo",
+    host=MCP_HOST,
+    port=MCP_PORT,
+    streamable_http_path=MCP_PATH,
+)
 
 
 def _db_connection() -> sqlite3.Connection:
@@ -110,7 +115,7 @@ def main() -> None:
 
             threading.Thread(target=_heartbeat, daemon=True).start()
 
-        mcp.run(transport="streamable-http", host=MCP_HOST, port=MCP_PORT, path=MCP_PATH)
+        mcp.run(transport="streamable-http")
         return
 
     print("[mcp-server-demo] Starting stdio MCP server.", flush=True)
