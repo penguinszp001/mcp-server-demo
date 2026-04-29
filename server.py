@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sqlite3
 import threading
 import time
@@ -20,6 +21,7 @@ MCP_HOST = os.getenv("MCP_HOST", "127.0.0.1")
 MCP_PORT = int(os.getenv("MCP_PORT", "8000"))
 MCP_PATH = os.getenv("MCP_PATH", "/mcp")
 HEARTBEAT_SECONDS = int(os.getenv("MCP_HEARTBEAT_SECONDS", "30"))
+FILE_OPS_ROOT = os.getenv("MCP_FILE_OPS_ROOT")
 
 mcp = FastMCP(
     "local-mcp-demo",
@@ -58,6 +60,19 @@ def _bootstrap_db() -> None:
             )
 
 
+def _resolve_file_ops_path(path: str | None = None) -> Path:
+    if not FILE_OPS_ROOT:
+        raise ValueError("MCP_FILE_OPS_ROOT is not configured in .env.")
+
+    root = Path(FILE_OPS_ROOT).expanduser().resolve()
+    root.mkdir(parents=True, exist_ok=True)
+
+    target = root if path is None else (root / path).resolve()
+    if target != root and root not in target.parents:
+        raise ValueError("Path escapes the configured MCP_FILE_OPS_ROOT.")
+    return target
+
+
 @mcp.tool()
 def weather(city: str) -> str:
     """Return current weather for a city using wttr.in."""
@@ -88,6 +103,59 @@ def query_db(sql: str) -> str:
     with _db_connection() as conn:
         rows = conn.execute(sql).fetchall()
     return json.dumps([dict(r) for r in rows], indent=2)
+
+
+@mcp.tool()
+def make_directory(path: str) -> str:
+    """Create a directory inside MCP_FILE_OPS_ROOT."""
+    target = _resolve_file_ops_path(path)
+    target.mkdir(parents=True, exist_ok=True)
+    return f"Created directory: {target}"
+
+
+@mcp.tool()
+def move_file(source_path: str, destination_path: str) -> str:
+    """Move a file from source_path to destination_path inside MCP_FILE_OPS_ROOT."""
+    source = _resolve_file_ops_path(source_path)
+    destination = _resolve_file_ops_path(destination_path)
+
+    if not source.is_file():
+        raise ValueError(f"Source file does not exist: {source}")
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(source), str(destination))
+    return f"Moved file from {source} to {destination}"
+
+
+@mcp.tool()
+def list_files(path: str = ".") -> str:
+    """List files directly inside a folder within MCP_FILE_OPS_ROOT."""
+    target = _resolve_file_ops_path(path)
+    if not target.is_dir():
+        raise ValueError(f"Not a directory: {target}")
+
+    files = sorted(p.name for p in target.iterdir() if p.is_file())
+    return json.dumps(files, indent=2)
+
+
+@mcp.tool()
+def list_directories(path: str = ".") -> str:
+    """List directories directly inside a folder within MCP_FILE_OPS_ROOT."""
+    target = _resolve_file_ops_path(path)
+    if not target.is_dir():
+        raise ValueError(f"Not a directory: {target}")
+
+    directories = sorted(p.name for p in target.iterdir() if p.is_dir())
+    return json.dumps(directories, indent=2)
+
+
+@mcp.tool()
+def read_file(path: str) -> str:
+    """Read a UTF-8 text file inside MCP_FILE_OPS_ROOT."""
+    target = _resolve_file_ops_path(path)
+    if not target.is_file():
+        raise ValueError(f"File does not exist: {target}")
+    return target.read_text(encoding="utf-8")
 
 
 def main() -> None:

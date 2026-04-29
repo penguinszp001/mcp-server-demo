@@ -22,7 +22,8 @@ pip install -e .
 ```bash
 cp .env.example .env
 ```
-Fill in your OPENAI_API_KEY and keep MCP_DEMO_DB_PATH=demo.db
+Fill in your OPENAI_API_KEY and keep MCP_DEMO_DB_PATH=demo.db.
+If you want to use file tools, set MCP_FILE_OPS_ROOT to a local folder path that the server is allowed to manage.
 
 You will fill out the MCP_SERVER_URL in a later step
 
@@ -58,9 +59,14 @@ streamlit run web_client.py
 
 ---
 
-A from-scratch local MCP server with two tools:
+A from-scratch local MCP server with tools for weather, SQLite reads, and local file operations:
 - `weather(city)` → current weather via wttr.in
 - `query_db(sql)` → read-only SQLite SELECT query
+- `make_directory(path)` → create directories inside `MCP_FILE_OPS_ROOT`
+- `move_file(source_path, destination_path)` → move files inside `MCP_FILE_OPS_ROOT`
+- `list_files(path=".")` → list files in a folder inside `MCP_FILE_OPS_ROOT`
+- `list_directories(path=".")` → list directories in a folder inside `MCP_FILE_OPS_ROOT`
+- `read_file(path)` → read text files inside `MCP_FILE_OPS_ROOT`
 
 ## Notes
 
@@ -96,3 +102,8 @@ Returns JSON summary fields including temperature, feels-like, humidity, wind, a
 - `web_client.py` — Streamlit chat client.
 - `pyproject.toml` — package metadata + script entrypoint.
 - `requirements.txt` — pinned runtime dependencies for local setup.
+
+### File operation tools
+- All file operations are constrained to `MCP_FILE_OPS_ROOT`.
+- The server rejects paths that try to escape that root.
+- `MCP_FILE_OPS_ROOT` directories are created automatically if they do not exist.
