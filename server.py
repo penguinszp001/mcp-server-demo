@@ -13,6 +13,10 @@ from mcp.server.fastmcp import FastMCP
 load_dotenv()
 
 DB_PATH = Path(os.getenv("MCP_DEMO_DB_PATH", "demo.db"))
+MCP_TRANSPORT = os.getenv("MCP_TRANSPORT", "stdio")
+MCP_HOST = os.getenv("MCP_HOST", "127.0.0.1")
+MCP_PORT = int(os.getenv("MCP_PORT", "8000"))
+MCP_PATH = os.getenv("MCP_PATH", "/mcp")
 
 mcp = FastMCP("local-mcp-demo")
 
@@ -80,6 +84,11 @@ def query_db(sql: str) -> str:
 
 def main() -> None:
     _bootstrap_db()
+
+    if MCP_TRANSPORT == "streamable-http":
+        mcp.run(transport="streamable-http", host=MCP_HOST, port=MCP_PORT, path=MCP_PATH)
+        return
+
     mcp.run()
 
 

@@ -15,21 +15,45 @@ pip install -e .
 
 ## 2) Run the MCP server
 
+### Option A: stdio mode (default)
+
 ```bash
 mcp-server-demo
 ```
 
-This starts the local server and creates `demo.db` automatically with sample rows.
+This mode is best for local tool-host integrations that launch your server process directly.
 
-## 3) Quick manual MCP check (optional)
+### Option B: HTTP mode (for manual testing via `curl`)
 
-If you have MCP Inspector installed:
+```bash
+MCP_TRANSPORT=streamable-http MCP_HOST=127.0.0.1 MCP_PORT=8000 MCP_PATH=/mcp mcp-server-demo
+```
+
+This starts an HTTP MCP endpoint at:
+
+`http://127.0.0.1:8000/mcp`
+
+The server also creates `demo.db` automatically with sample rows.
+
+## 3) Manual checks
+
+### A) Basic endpoint reachability
+
+```bash
+curl -i http://127.0.0.1:8000/mcp
+```
+
+If your server is running in HTTP mode, you should get an HTTP response (status may vary by MCP implementation/version).
+
+### B) Protocol-level test (recommended)
+
+Use MCP Inspector to verify tools and invoke them:
 
 ```bash
 npx @modelcontextprotocol/inspector
 ```
 
-Then connect to your local Python server.
+Connect to your local Python server and confirm `weather` and `query_db` are listed.
 
 ## 4) OpenAI API integration option
 
@@ -39,7 +63,11 @@ Then connect to your local Python server.
 cp .env.example .env
 ```
 
-2. Start the server in one terminal.
+2. Start the server in HTTP mode:
+
+```bash
+MCP_TRANSPORT=streamable-http MCP_HOST=127.0.0.1 MCP_PORT=8000 MCP_PATH=/mcp mcp-server-demo
+```
 
 3. In a second terminal, run:
 
@@ -47,7 +75,7 @@ cp .env.example .env
 python client_openai_api.py
 ```
 
-> Note: this uses OpenAI Responses API with an MCP tool definition pointing at `http://localhost:8000/mcp`.
+> Note: the client uses OpenAI Responses API with an MCP tool definition pointing at `http://localhost:8000/mcp`.
 
 ## Tool behavior
 
