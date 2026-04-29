@@ -6,11 +6,13 @@ Run the server first, then run this script in another terminal.
 from __future__ import annotations
 
 import os
+from dotenv import load_dotenv
 
 from openai import OpenAI
 
 
 def main() -> None:
+    load_dotenv()
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("Set OPENAI_API_KEY in your environment.")
