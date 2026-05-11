@@ -9,8 +9,6 @@ import time
 import base64
 import mimetypes
 import traceback
-import inspect
-from functools import wraps
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
@@ -34,7 +32,15 @@ MCP_PATH = os.getenv("MCP_PATH", "/mcp")
 HEARTBEAT_SECONDS = int(os.getenv("MCP_HEARTBEAT_SECONDS", "30"))
 FILE_OPS_ROOT = os.getenv("MCP_FILE_OPS_ROOT")
 
-mcp = FastMCP(
+class LoggedFastMCP(FastMCP):
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        async def _invoke() -> Any:
+            return await super(LoggedFastMCP, self).call_tool(name, arguments)
+
+        return await _run_async_tool_with_logging(name, arguments, _invoke)
+
+
+mcp = LoggedFastMCP(
     "local-mcp-demo",
     host=MCP_HOST,
     port=MCP_PORT,
@@ -139,19 +145,33 @@ def _run_tool_with_logging(tool_name: str, tool_args: dict[str, Any], fn: Any) -
 
 
 
-def log_tool_call(fn: Any) -> Any:
-    signature = inspect.signature(fn)
-
-    @wraps(fn)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
-        bound = signature.bind_partial(*args, **kwargs)
-        return _run_tool_with_logging(
-            tool_name=fn.__name__,
-            tool_args=dict(bound.arguments),
-            fn=lambda: fn(*args, **kwargs),
+async def _run_async_tool_with_logging(tool_name: str, tool_args: dict[str, Any], fn: Any) -> Any:
+    start = time.time()
+    _write_tool_event({"event": "tool_start", "tool": tool_name, "args": _truncate_for_log(tool_args)})
+    try:
+        result = await fn()
+        _write_tool_event(
+            {
+                "event": "tool_success",
+                "tool": tool_name,
+                "duration_ms": int((time.time() - start) * 1000),
+                "result_preview": _truncate_for_log(result),
+            }
         )
+        return result
+    except Exception as exc:
+        _write_tool_event(
+            {
+                "event": "tool_error",
+                "tool": tool_name,
+                "duration_ms": int((time.time() - start) * 1000),
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "traceback": traceback.format_exc(),
+            }
+        )
+        raise
 
-    return wrapper
 
 def _extract_text_from_digital_pdf(path: Path) -> str:
     reader = PdfReader(str(path))
@@ -204,7 +224,6 @@ def _summarize_text_with_openai(text: str, prompt: str | None = None, model: str
 
 
 @mcp.tool()
-@log_tool_call
 def weather(city: str) -> str:
     """Return current weather for a city using wttr.in."""
     response = httpx.get(f"https://wttr.in/{city}", params={"format": "j1"}, timeout=20)
@@ -225,7 +244,6 @@ def weather(city: str) -> str:
 
 
 @mcp.tool()
-@log_tool_call
 def query_db(sql: str) -> str:
     """Run a read-only SELECT query against local SQLite demo.db."""
     normalized = sql.strip().lower().rstrip(";")
@@ -238,7 +256,6 @@ def query_db(sql: str) -> str:
 
 
 @mcp.tool()
-@log_tool_call
 def make_directory(path: str) -> str:
     """Create a directory inside MCP_FILE_OPS_ROOT."""
     target = _resolve_file_ops_path(path)
@@ -247,7 +264,6 @@ def make_directory(path: str) -> str:
 
 
 @mcp.tool()
-@log_tool_call
 def move_file(source_path: str, destination_path: str) -> str:
     """Move a file from source_path to destination_path inside MCP_FILE_OPS_ROOT."""
     source = _resolve_file_ops_path(source_path)
@@ -262,7 +278,6 @@ def move_file(source_path: str, destination_path: str) -> str:
 
 
 @mcp.tool()
-@log_tool_call
 def move_files_by_glob(source_dir: str, pattern: str, destination_dir: str) -> str:
     """Move all files matching a glob pattern from source_dir into destination_dir."""
     source_root = _resolve_file_ops_path(source_dir)
@@ -300,7 +315,6 @@ def move_files_by_glob(source_dir: str, pattern: str, destination_dir: str) -> s
 
 
 @mcp.tool()
-@log_tool_call
 def list_files(path: str = ".") -> str:
     """List only files in a folder; for general content checks use list_directory_contents."""
     target = _resolve_file_ops_path(path)
@@ -312,7 +326,6 @@ def list_files(path: str = ".") -> str:
 
 
 @mcp.tool()
-@log_tool_call
 def list_directories(path: str = ".") -> str:
     """List only directories in a folder; for general content checks use list_directory_contents."""
     target = _resolve_file_ops_path(path)
@@ -324,7 +337,6 @@ def list_directories(path: str = ".") -> str:
 
 
 @mcp.tool()
-@log_tool_call
 def list_directory_contents(path: str = ".") -> str:
     """Primary directory listing tool: return both files and directories in one response."""
     target = _resolve_file_ops_path(path)
@@ -348,7 +360,6 @@ def list_directory_contents(path: str = ".") -> str:
 
 
 @mcp.tool()
-@log_tool_call
 def read_file(path: str) -> str:
     """Read a UTF-8 text file inside MCP_FILE_OPS_ROOT."""
     target = _resolve_file_ops_path(path)
@@ -358,7 +369,6 @@ def read_file(path: str) -> str:
 
 
 @mcp.tool()
-@log_tool_call
 def inspect_file(path: str, preview_chars: int = 4000, include_base64: bool = False) -> str:
     """Return file metadata and content preview for text/csv/image workflows."""
     target = _resolve_file_ops_path(path)
@@ -391,7 +401,6 @@ def inspect_file(path: str, preview_chars: int = 4000, include_base64: bool = Fa
 
 
 @mcp.tool()
-@log_tool_call
 def analyze_image_with_openai(path: str, prompt: str, model: str = "gpt-4.1-mini") -> str:
     """Analyze an image file with an OpenAI vision-capable model."""
     api_key = os.getenv("OPENAI_API_KEY")
@@ -427,7 +436,6 @@ def analyze_image_with_openai(path: str, prompt: str, model: str = "gpt-4.1-mini
 
 
 @mcp.tool()
-@log_tool_call
 def summarize_documents_in_folder(
     folder_path: str,
     prompt: str | None = None,
@@ -491,7 +499,6 @@ def summarize_documents_in_folder(
 
 
 @mcp.tool()
-@log_tool_call
 def review_contract_language(path: str, focus: str | None = None, model: str = "gpt-4.1-mini") -> str:
     """Flag potentially misleading or risky contract language (not legal advice)."""
 
@@ -533,7 +540,6 @@ def review_contract_language(path: str, focus: str | None = None, model: str = "
 
 
 @mcp.tool()
-@log_tool_call
 def extract_text_from_scanned_pdf(path: str, max_pages: int = 20, model: str = "gpt-4.1-mini") -> str:
     """Extract text from scanned/image PDFs by rendering pages and using vision."""
     if max_pages < 1:
@@ -592,7 +598,6 @@ def extract_text_from_scanned_pdf(path: str, max_pages: int = 20, model: str = "
 
 
 @mcp.tool()
-@log_tool_call
 def write_text_file(path: str, content: str, overwrite: bool = False) -> str:
     """Write a .txt file under MCP_FILE_OPS_ROOT."""
     target = _resolve_file_ops_path(path)
