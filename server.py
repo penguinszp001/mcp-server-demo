@@ -135,6 +135,124 @@ def _run_tool_with_logging(tool_name: str, tool_args: dict[str, Any], fn: Any) -
         raise
 
 
+
+
+def _stage_log(stage: str, **fields: Any) -> None:
+    payload = {"event": stage}
+    payload.update(fields)
+    _write_tool_event(payload)
+
+
+def _printable_text_ratio(text: str) -> float:
+    if not text:
+        return 0.0
+    printable = sum(1 for ch in text if ch.isprintable() or ch in "\n\t\r")
+    return printable / len(text)
+
+
+def _quality_score(text: str) -> dict[str, Any]:
+    char_count = len(text)
+    whitespace_ratio = (sum(1 for ch in text if ch.isspace()) / char_count) if char_count else 1.0
+    printable_ratio = _printable_text_ratio(text)
+    quality_ok = char_count >= 80 and printable_ratio >= 0.85 and whitespace_ratio < 0.7
+    return {
+        "char_count": char_count,
+        "printable_text_ratio": round(printable_ratio, 4),
+        "whitespace_ratio": round(whitespace_ratio, 4),
+        "quality_ok": quality_ok,
+    }
+
+
+def _classify_file(path: Path) -> dict[str, Any]:
+    extension = path.suffix.lower()
+    mime_type, _ = mimetypes.guess_type(str(path))
+    capability = "unsupported"
+    page_count = None
+    has_embedded_text = None
+    if extension in {".txt", ".md"}:
+        capability = "direct_text"
+    elif extension == ".docx":
+        capability = "docx_parse"
+    elif extension == ".pdf":
+        capability = "pdf_unknown"
+        reader = PdfReader(str(path))
+        page_count = len(reader.pages)
+        probe = "\n".join((reader.pages[i].extract_text() or "") for i in range(min(2, page_count)))
+        has_embedded_text = bool(probe.strip())
+        capability = "digitally_extractable_pdf" if has_embedded_text else "likely_scanned_pdf"
+
+    profile = {
+        "path": str(path),
+        "name": path.name,
+        "extension": extension,
+        "mime_type": mime_type or "application/octet-stream",
+        "size_bytes": path.stat().st_size,
+        "page_count": page_count,
+        "has_embedded_text": has_embedded_text,
+        "capability_profile": capability,
+    }
+    _stage_log("classify_file", profile=profile)
+    return profile
+
+
+def _build_extraction_plan(profile: dict[str, Any]) -> dict[str, Any]:
+    ext = profile["extension"]
+    if ext in {".txt", ".md"}:
+        methods = ["direct_text_read"]
+    elif ext == ".docx":
+        methods = ["docx_parse"]
+    elif ext == ".pdf":
+        methods = ["digital_pdf_parse", "ocr_pdf_fallback"]
+    else:
+        methods = []
+    plan = {"file": profile["path"], "methods": methods}
+    _stage_log("plan_created", plan=plan)
+    return plan
+
+
+def _extract_via_plan(path: Path, plan: dict[str, Any], model: str = "gpt-4.1-mini") -> dict[str, Any]:
+    attempts = []
+    for method in plan["methods"]:
+        _stage_log("extract_attempt", file=str(path), method=method)
+        if method == "direct_text_read":
+            text = path.read_text(encoding="utf-8")
+        elif method == "docx_parse":
+            text = _extract_text_from_docx(path)
+        elif method == "digital_pdf_parse":
+            text = _extract_text_from_digital_pdf(path)
+        elif method == "ocr_pdf_fallback":
+            parsed = json.loads(extract_text_from_scanned_pdf(path=str(path.relative_to(_resolve_file_ops_path())), model=model))
+            text = parsed.get("text", "")
+        else:
+            continue
+
+        quality = _quality_score(text)
+        attempts.append({"method": method, "quality": quality})
+        if quality["quality_ok"]:
+            artifact = {
+                "source_metadata": _classify_file(path),
+                "extraction_method": method,
+                "quality": quality,
+                "extracted_text": text,
+                "attempts": attempts,
+            }
+            _stage_log("extract_success", file=str(path), method=method, quality=quality)
+            return artifact
+        _stage_log("extract_fallback", file=str(path), method=method, quality=quality)
+
+    raise ValueError(f"No extraction method met quality checks for {path}")
+
+
+def _tool_with_logging(name: str):
+    def decorator(fn: Any) -> Any:
+        def wrapped(*args: Any, **kwargs: Any) -> str:
+            tool_args = kwargs.copy()
+            return _run_tool_with_logging(name, tool_args, lambda: fn(*args, **kwargs))
+
+        return wrapped
+
+    return decorator
+
 def _extract_text_from_digital_pdf(path: Path) -> str:
     reader = PdfReader(str(path))
     pages = [page.extract_text() or "" for page in reader.pages]
@@ -186,6 +304,7 @@ def _summarize_text_with_openai(text: str, prompt: str | None = None, model: str
 
 
 @mcp.tool()
+@_tool_with_logging("weather")
 def weather(city: str) -> str:
     """Return current weather for a city using wttr.in."""
     response = httpx.get(f"https://wttr.in/{city}", params={"format": "j1"}, timeout=20)
@@ -206,6 +325,7 @@ def weather(city: str) -> str:
 
 
 @mcp.tool()
+@_tool_with_logging("query_db")
 def query_db(sql: str) -> str:
     """Run a read-only SELECT query against local SQLite demo.db."""
     normalized = sql.strip().lower().rstrip(";")
@@ -218,6 +338,7 @@ def query_db(sql: str) -> str:
 
 
 @mcp.tool()
+@_tool_with_logging("make_directory")
 def make_directory(path: str) -> str:
     """Create a directory inside MCP_FILE_OPS_ROOT."""
     target = _resolve_file_ops_path(path)
@@ -226,6 +347,7 @@ def make_directory(path: str) -> str:
 
 
 @mcp.tool()
+@_tool_with_logging("move_file")
 def move_file(source_path: str, destination_path: str) -> str:
     """Move a file from source_path to destination_path inside MCP_FILE_OPS_ROOT."""
     source = _resolve_file_ops_path(source_path)
@@ -240,6 +362,7 @@ def move_file(source_path: str, destination_path: str) -> str:
 
 
 @mcp.tool()
+@_tool_with_logging("move_files_by_glob")
 def move_files_by_glob(source_dir: str, pattern: str, destination_dir: str) -> str:
     """Move all files matching a glob pattern from source_dir into destination_dir."""
     source_root = _resolve_file_ops_path(source_dir)
@@ -277,6 +400,7 @@ def move_files_by_glob(source_dir: str, pattern: str, destination_dir: str) -> s
 
 
 @mcp.tool()
+@_tool_with_logging("list_files")
 def list_files(path: str = ".") -> str:
     """List only files in a folder; for general content checks use list_directory_contents."""
     target = _resolve_file_ops_path(path)
@@ -288,6 +412,7 @@ def list_files(path: str = ".") -> str:
 
 
 @mcp.tool()
+@_tool_with_logging("list_directories")
 def list_directories(path: str = ".") -> str:
     """List only directories in a folder; for general content checks use list_directory_contents."""
     target = _resolve_file_ops_path(path)
@@ -299,6 +424,7 @@ def list_directories(path: str = ".") -> str:
 
 
 @mcp.tool()
+@_tool_with_logging("list_directory_contents")
 def list_directory_contents(path: str = ".") -> str:
     """Primary directory listing tool: return both files and directories in one response."""
     target = _resolve_file_ops_path(path)
@@ -322,6 +448,7 @@ def list_directory_contents(path: str = ".") -> str:
 
 
 @mcp.tool()
+@_tool_with_logging("read_file")
 def read_file(path: str) -> str:
     """Read a UTF-8 text file inside MCP_FILE_OPS_ROOT."""
     target = _resolve_file_ops_path(path)
@@ -331,6 +458,7 @@ def read_file(path: str) -> str:
 
 
 @mcp.tool()
+@_tool_with_logging("inspect_file")
 def inspect_file(path: str, preview_chars: int = 4000, include_base64: bool = False) -> str:
     """Return file metadata and content preview for text/csv/image workflows."""
     target = _resolve_file_ops_path(path)
@@ -363,6 +491,7 @@ def inspect_file(path: str, preview_chars: int = 4000, include_base64: bool = Fa
 
 
 @mcp.tool()
+@_tool_with_logging("analyze_image_with_openai")
 def analyze_image_with_openai(path: str, prompt: str, model: str = "gpt-4.1-mini") -> str:
     """Analyze an image file with an OpenAI vision-capable model."""
     api_key = os.getenv("OPENAI_API_KEY")
@@ -405,59 +534,65 @@ def summarize_documents_in_folder(
     model: str = "gpt-4.1-mini",
 ) -> str:
     """Summarize supported documents in a folder and return per-file + overall summaries."""
-    if max_files < 1:
-        raise ValueError("max_files must be at least 1.")
-    folder = _resolve_file_ops_path(folder_path)
-    if not folder.is_dir():
-        raise ValueError(f"Not a directory: {folder}")
+    def _impl() -> str:
+        if max_files < 1:
+            raise ValueError("max_files must be at least 1.")
+        folder = _resolve_file_ops_path(folder_path)
+        if not folder.is_dir():
+            raise ValueError(f"Not a directory: {folder}")
 
-    files = [p for p in sorted(folder.iterdir()) if p.is_file()][:max_files]
-    summaries: list[dict[str, Any]] = []
-    skipped_files: list[dict[str, str]] = []
+        files = [p for p in sorted(folder.iterdir()) if p.is_file()][:max_files]
+        summaries: list[dict[str, Any]] = []
+        skipped_files: list[dict[str, str]] = []
 
-    for file_path in files:
-        if file_path.suffix.lower() not in SUPPORTED_TEXT_EXTENSIONS:
-            skipped_files.append({"path": str(file_path), "reason": "unsupported_file_type"})
-            continue
-        try:
-            text = extract_text_from_file(file_path)
-            if not text.strip():
-                skipped_files.append({"path": str(file_path), "reason": "empty_or_unreadable_content"})
+        for file_path in files:
+            if file_path.suffix.lower() not in SUPPORTED_TEXT_EXTENSIONS:
+                skipped_files.append({"path": str(file_path), "reason": "unsupported_file_type"})
                 continue
-            summary = _summarize_text_with_openai(text=text, prompt=prompt, model=model)
-            summaries.append(
-                {
-                    "path": str(file_path),
-                    "file_name": file_path.name,
-                    "summary": summary,
-                    "char_count": len(text),
-                }
+            try:
+                profile = _classify_file(file_path)
+                plan = _build_extraction_plan(profile)
+                artifact = _extract_via_plan(file_path, plan, model=model)
+                text = artifact["extracted_text"]
+                summary = _summarize_text_with_openai(text=text, prompt=prompt, model=model)
+                summaries.append(
+                    {
+                        "path": str(file_path),
+                        "file_name": file_path.name,
+                        "summary": summary,
+                        "char_count": len(text),
+                        "artifact": {k: v for k, v in artifact.items() if k != "extracted_text"},
+                    }
+                )
+            except Exception as exc:
+                skipped_files.append({"path": str(file_path), "reason": str(exc)})
+
+        combined = "\n\n".join(
+            f"{item['file_name']}:\n{item['summary']}" for item in summaries
+        )[:200000]
+        overall_summary = ""
+        if combined:
+            overall_summary = _summarize_text_with_openai(
+                text=combined,
+                prompt=prompt or "Create an overall summary across these file summaries.",
+                model=model,
             )
-        except Exception as exc:
-            skipped_files.append({"path": str(file_path), "reason": str(exc)})
-
-    combined = "\n\n".join(
-        f"{item['file_name']}:\n{item['summary']}" for item in summaries
-    )[:200000]
-    overall_summary = ""
-    if combined:
-        overall_summary = _summarize_text_with_openai(
-            text=combined,
-            prompt=prompt or "Create an overall summary across these file summaries.",
-            model=model,
-        )
-
-    return json.dumps(
-        {
+        _stage_log("task_run", task="summarize_documents_in_folder", processed_files=len(summaries))
+        return json.dumps({
             "folder_path": str(folder),
             "max_files": max_files,
             "processed_files": len(summaries),
             "skipped_files": skipped_files,
             "per_file_summaries": summaries,
             "overall_summary": overall_summary,
-        },
-        indent=2,
+        }, indent=2)
+
+    return _run_tool_with_logging(
+        tool_name="summarize_documents_in_folder",
+        tool_args={"folder_path": folder_path, "prompt": prompt, "max_files": max_files, "model": model},
+        fn=_impl,
     )
+
 
 
 @mcp.tool()
@@ -471,9 +606,10 @@ def review_contract_language(path: str, focus: str | None = None, model: str = "
         if target.suffix.lower() not in SUPPORTED_TEXT_EXTENSIONS:
             raise ValueError("Supported file types: .txt, .md, .pdf, .docx")
 
-        text = extract_text_from_file(target)
-        if not text.strip():
-            raise ValueError("No readable text extracted from file.")
+        profile = _classify_file(target)
+        plan = _build_extraction_plan(profile)
+        artifact = _extract_via_plan(target, plan, model=model)
+        text = artifact["extracted_text"]
 
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
@@ -495,6 +631,8 @@ def review_contract_language(path: str, focus: str | None = None, model: str = "
         output_text = response.output_text
         payload = json.loads(output_text)
         payload["document_path"] = str(target)
+        payload["artifact"] = {k: v for k, v in artifact.items() if k != "extracted_text"}
+        _stage_log("task_run", task="review_contract_language", file=str(target))
         payload["disclaimer"] = "This review is automated and is not legal advice."
         return json.dumps(payload, indent=2)
 
@@ -506,6 +644,7 @@ def review_contract_language(path: str, focus: str | None = None, model: str = "
 
 
 @mcp.tool()
+@_tool_with_logging("extract_text_from_scanned_pdf")
 def extract_text_from_scanned_pdf(path: str, max_pages: int = 20, model: str = "gpt-4.1-mini") -> str:
     """Extract text from scanned/image PDFs by rendering pages and using vision."""
     if max_pages < 1:
@@ -564,6 +703,7 @@ def extract_text_from_scanned_pdf(path: str, max_pages: int = 20, model: str = "
 
 
 @mcp.tool()
+@_tool_with_logging("write_text_file")
 def write_text_file(path: str, content: str, overwrite: bool = False) -> str:
     """Write a .txt file under MCP_FILE_OPS_ROOT."""
     target = _resolve_file_ops_path(path)
@@ -579,6 +719,8 @@ def write_text_file(path: str, content: str, overwrite: bool = False) -> str:
         {"path": str(target), "bytes_written": len(encoded), "overwrite": overwrite},
         indent=2,
     )
+
+
 
 
 def main() -> None:
