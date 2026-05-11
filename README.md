@@ -59,7 +59,7 @@ streamlit run web_client.py
 
 ---
 
-A from-scratch local MCP server with tools for weather, SQLite reads, and local file operations:
+A from-scratch local MCP server with tools for weather, SQLite reads, local file operations, document summarization, contract-language risk review, and scanned PDF OCR:
 - `weather(city)` → current weather via wttr.in
 - `query_db(sql)` → read-only SQLite SELECT query
 - `make_directory(path)` → create directories inside `MCP_FILE_OPS_ROOT`
@@ -70,6 +70,10 @@ A from-scratch local MCP server with tools for weather, SQLite reads, and local 
 - `read_file(path)` → read text files inside `MCP_FILE_OPS_ROOT`
 - `inspect_file(path, preview_chars=4000, include_base64=False)` → metadata + preview for text/csv/image files
 - `analyze_image_with_openai(path, prompt, model='gpt-4.1-mini')` → send image to OpenAI vision-capable model
+- `summarize_documents_in_folder(folder_path, prompt=None, max_files=50, model='gpt-4.1-mini')` → summarize supported docs (`.txt`, `.md`, `.pdf`, `.docx`) in a folder
+- `review_contract_language(path, focus=None, model='gpt-4.1-mini')` → flag potentially ambiguous/risky contract language
+- `extract_text_from_scanned_pdf(path, max_pages=20, model='gpt-4.1-mini')` → OCR scanned PDFs with vision
+- `write_text_file(path, content, overwrite=False)` → safe `.txt` writes under `MCP_FILE_OPS_ROOT`
 
 ## Notes
 
@@ -77,6 +81,7 @@ A from-scratch local MCP server with tools for weather, SQLite reads, and local 
 - The server creates `demo.db` automatically with sample rows.
 - `npx` requires Node.js/npm installed locally.
 - `streamlit` is included in `requirements.txt`.
+- OCR support uses `pypdfium2` to render PDF pages as images for vision-based extraction.
 
 ## OpenAI API integration option
 
@@ -110,3 +115,70 @@ Returns JSON summary fields including temperature, feels-like, humidity, wind, a
 - All file operations are constrained to `MCP_FILE_OPS_ROOT`.
 - The server rejects paths that try to escape that root.
 - `MCP_FILE_OPS_ROOT` directories are created automatically if they do not exist.
+
+## New document + contract tools
+
+### Supported document types
+- Digital text: `.txt`, `.md`, `.pdf` (digitally readable text), `.docx`
+- Scanned/image PDFs: use `extract_text_from_scanned_pdf`
+
+### `summarize_documents_in_folder(folder_path: str, prompt: str | None = None, max_files: int = 50, model: str = "gpt-4.1-mini")`
+- Safely resolves folder under `MCP_FILE_OPS_ROOT`.
+- Reads up to `max_files` files in that folder (non-recursive).
+- Skips unsupported or unreadable files and reports them in `skipped_files`.
+- Returns JSON with:
+  - per-file summaries
+  - overall summary
+  - processing metadata
+
+Example payload:
+```json
+{
+  "folder_path": "contracts/q1",
+  "prompt": "Focus on key obligations and risks",
+  "max_files": 25
+}
+```
+
+### `review_contract_language(path: str, focus: str | None = None, model: str = "gpt-4.1-mini")`
+- Accepts `.txt`, `.md`, `.pdf`, `.docx`.
+- Extracts text and asks OpenAI to return structured JSON findings:
+  - `potential_issues[]` with `risk_type`, `severity`, `why_flagged`, `suggested_plain_language_revision`, etc.
+- Adds explicit disclaimer: **not legal advice**.
+
+Example payload:
+```json
+{
+  "path": "contracts/vendor_agreement.docx",
+  "focus": "Look for hidden fee signals and one-sided termination language"
+}
+```
+
+### `extract_text_from_scanned_pdf(path: str, max_pages: int = 20, model: str = "gpt-4.1-mini")`
+- Intended for scanned/image PDFs.
+- Renders pages to images using `pypdfium2`, then sends each page to a vision-capable OpenAI model.
+- Returns combined extracted text and per-page extraction metadata.
+- Defensively limits processing with `max_pages`.
+
+Example payload:
+```json
+{
+  "path": "scans/contract_scan.pdf",
+  "max_pages": 10
+}
+```
+
+### `write_text_file(path: str, content: str, overwrite: bool = false)`
+- Only writes `.txt`.
+- Enforces path safety under `MCP_FILE_OPS_ROOT`.
+- Creates parent directories when needed.
+- Returns `path` + `bytes_written` metadata.
+
+Example payload:
+```json
+{
+  "path": "notes/summary.txt",
+  "content": "Key findings...",
+  "overwrite": false
+}
+```
