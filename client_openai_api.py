@@ -5,13 +5,43 @@ Run the server first, then run this script in another terminal.
 
 from __future__ import annotations
 
+import json
 import os
+from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
 from openai import APIStatusError, OpenAI
 
+
+
+CLIENT_LOG_PATH = Path(os.getenv("MCP_CLIENT_LOG_PATH", "mcp_client_events.jsonl"))
+
+
+def _log_client_event(event: dict) -> None:
+    event.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
+    CLIENT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(event, ensure_ascii=False)
+    with CLIENT_LOG_PATH.open("a", encoding="utf-8") as handle:
+        handle.write(line + "\n")
+    print(f"[mcp-client-log] {line}")
+
+
+def _log_response_details(response: object) -> None:
+    for item in getattr(response, "output", []) or []:
+        item_type = getattr(item, "type", "unknown")
+        details = {"event": "response_output", "item_type": item_type}
+        if hasattr(item, "name"):
+            details["name"] = getattr(item, "name")
+        if hasattr(item, "id"):
+            details["id"] = getattr(item, "id")
+        if hasattr(item, "arguments"):
+            details["arguments"] = getattr(item, "arguments")
+        if hasattr(item, "error") and getattr(item, "error"):
+            details["error"] = getattr(item, "error")
+        _log_client_event(details)
 
 def main() -> None:
     # Load .env from current directory so OPENAI_API_KEY is available.
@@ -43,6 +73,8 @@ def main() -> None:
             print("Please enter a non-empty query.")
             continue
 
+        _log_client_event({"event": "prompt_submitted", "prompt": user_query, "server_url": server_url})
+
         try:
             response = client.responses.create(
                 model="gpt-4.1-mini",
@@ -57,6 +89,7 @@ def main() -> None:
                 ],
             )
         except APIStatusError as err:
+            _log_client_event({"event": "api_error", "error": str(err)})
             print(f"OpenAI API error: {err}")
             print()
             print("Troubleshooting:")
@@ -68,6 +101,8 @@ def main() -> None:
             )
             continue
 
+        _log_client_event({"event": "response_text", "output_text": response.output_text})
+        _log_response_details(response)
         print(response.output_text)
 
 

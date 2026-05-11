@@ -8,6 +8,8 @@ import threading
 import time
 import base64
 import mimetypes
+import traceback
+from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -81,6 +83,56 @@ def _resolve_file_ops_path(path: str | None = None) -> Path:
 
 
 SUPPORTED_TEXT_EXTENSIONS = {".txt", ".md", ".pdf", ".docx"}
+
+
+LOG_PATH = Path(os.getenv("MCP_TOOL_LOG_PATH", "mcp_tool_events.jsonl"))
+
+
+def _write_tool_event(event: dict[str, Any]) -> None:
+    event.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
+    serialized = json.dumps(event, ensure_ascii=False)
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with LOG_PATH.open("a", encoding="utf-8") as handle:
+        handle.write(serialized + "\n")
+    print(f"[mcp-tool-log] {serialized}", flush=True)
+
+
+def _truncate_for_log(value: Any, max_chars: int = 2000) -> Any:
+    try:
+        as_text = json.dumps(value, ensure_ascii=False)
+    except TypeError:
+        as_text = str(value)
+    if len(as_text) <= max_chars:
+        return value
+    return f"{as_text[:max_chars]}...<truncated>"
+
+
+def _run_tool_with_logging(tool_name: str, tool_args: dict[str, Any], fn: Any) -> str:
+    start = time.time()
+    _write_tool_event({"event": "tool_start", "tool": tool_name, "args": _truncate_for_log(tool_args)})
+    try:
+        result = fn()
+        _write_tool_event(
+            {
+                "event": "tool_success",
+                "tool": tool_name,
+                "duration_ms": int((time.time() - start) * 1000),
+                "result_preview": _truncate_for_log(result),
+            }
+        )
+        return result
+    except Exception as exc:
+        _write_tool_event(
+            {
+                "event": "tool_error",
+                "tool": tool_name,
+                "duration_ms": int((time.time() - start) * 1000),
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "traceback": traceback.format_exc(),
+            }
+        )
+        raise
 
 
 def _extract_text_from_digital_pdf(path: Path) -> str:
@@ -411,38 +463,46 @@ def summarize_documents_in_folder(
 @mcp.tool()
 def review_contract_language(path: str, focus: str | None = None, model: str = "gpt-4.1-mini") -> str:
     """Flag potentially misleading or risky contract language (not legal advice)."""
-    target = _resolve_file_ops_path(path)
-    if not target.is_file():
-        raise ValueError(f"File does not exist: {target}")
-    if target.suffix.lower() not in SUPPORTED_TEXT_EXTENSIONS:
-        raise ValueError("Supported file types: .txt, .md, .pdf, .docx")
 
-    text = extract_text_from_file(target)
-    if not text.strip():
-        raise ValueError("No readable text extracted from file.")
+    def _impl() -> str:
+        target = _resolve_file_ops_path(path)
+        if not target.is_file():
+            raise ValueError(f"File does not exist: {target}")
+        if target.suffix.lower() not in SUPPORTED_TEXT_EXTENSIONS:
+            raise ValueError("Supported file types: .txt, .md, .pdf, .docx")
 
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise ValueError("OPENAI_API_KEY is not configured.")
+        text = extract_text_from_file(target)
+        if not text.strip():
+            raise ValueError("No readable text extracted from file.")
 
-    guidance = focus or "Find ambiguous, one-sided, vague, or potentially misleading language."
-    schema_prompt = (
-        "Return strict JSON with keys: potential_issues (array), disclaimer. "
-        "Each issue object must include: clause_excerpt, risk_type, severity, why_flagged, suggested_plain_language_revision."
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY is not configured.")
+
+        guidance = focus or "Find ambiguous, one-sided, vague, or potentially misleading language."
+        schema_prompt = (
+            "Return strict JSON with keys: potential_issues (array), disclaimer. "
+            "Each issue object must include: clause_excerpt, risk_type, severity, why_flagged, suggested_plain_language_revision."
+        )
+        client = OpenAI(api_key=api_key)
+        response = client.responses.create(
+            model=model,
+            input=[
+                {"role": "system", "content": "You are a contract risk reviewer. This is not legal advice."},
+                {"role": "user", "content": f"{schema_prompt}\nFocus: {guidance}\n\nContract text:\n{text[:200000]}"},
+            ],
+        )
+        output_text = response.output_text
+        payload = json.loads(output_text)
+        payload["document_path"] = str(target)
+        payload["disclaimer"] = "This review is automated and is not legal advice."
+        return json.dumps(payload, indent=2)
+
+    return _run_tool_with_logging(
+        tool_name="review_contract_language",
+        tool_args={"path": path, "focus": focus, "model": model},
+        fn=_impl,
     )
-    client = OpenAI(api_key=api_key)
-    response = client.responses.create(
-        model=model,
-        input=[
-            {"role": "system", "content": "You are a contract risk reviewer. This is not legal advice."},
-            {"role": "user", "content": f"{schema_prompt}\nFocus: {guidance}\n\nContract text:\n{text[:200000]}"},
-        ],
-    )
-    output_text = response.output_text
-    payload = json.loads(output_text)
-    payload["document_path"] = str(target)
-    payload["disclaimer"] = "This review is automated and is not legal advice."
-    return json.dumps(payload, indent=2)
 
 
 @mcp.tool()

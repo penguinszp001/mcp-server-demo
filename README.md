@@ -82,6 +82,8 @@ A from-scratch local MCP server with tools for weather, SQLite reads, local file
 - `npx` requires Node.js/npm installed locally.
 - `streamlit` is included in `requirements.txt`.
 - OCR support uses `pypdfium2` to render PDF pages as images for vision-based extraction.
+- Tool/server logging: `review_contract_language` writes JSONL lifecycle logs to `mcp_tool_events.jsonl` (or `MCP_TOOL_LOG_PATH`).
+- Client logging: `client_openai_api.py` writes request/response/tool-output events to `mcp_client_events.jsonl` (or `MCP_CLIENT_LOG_PATH`).
 
 ## OpenAI API integration option
 
