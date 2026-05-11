@@ -226,7 +226,7 @@ def move_files_by_glob(source_dir: str, pattern: str, destination_dir: str) -> s
 
 @mcp.tool()
 def list_files(path: str = ".") -> str:
-    """List files directly inside a folder within MCP_FILE_OPS_ROOT."""
+    """List only files in a folder; for general content checks use list_directory_contents."""
     target = _resolve_file_ops_path(path)
     if not target.is_dir():
         raise ValueError(f"Not a directory: {target}")
@@ -237,13 +237,36 @@ def list_files(path: str = ".") -> str:
 
 @mcp.tool()
 def list_directories(path: str = ".") -> str:
-    """List directories directly inside a folder within MCP_FILE_OPS_ROOT."""
+    """List only directories in a folder; for general content checks use list_directory_contents."""
     target = _resolve_file_ops_path(path)
     if not target.is_dir():
         raise ValueError(f"Not a directory: {target}")
 
     directories = sorted(p.name for p in target.iterdir() if p.is_dir())
     return json.dumps(directories, indent=2)
+
+
+@mcp.tool()
+def list_directory_contents(path: str = ".") -> str:
+    """Primary directory listing tool: return both files and directories in one response."""
+    target = _resolve_file_ops_path(path)
+    if not target.is_dir():
+        raise ValueError(f"Not a directory: {target}")
+
+    files = sorted(p.name for p in target.iterdir() if p.is_file())
+    directories = sorted(p.name for p in target.iterdir() if p.is_dir())
+
+    return json.dumps(
+        {
+            "path": str(target),
+            "file_count": len(files),
+            "directory_count": len(directories),
+            "files": files,
+            "directories": directories,
+            "is_empty": len(files) == 0 and len(directories) == 0,
+        },
+        indent=2,
+    )
 
 
 @mcp.tool()
