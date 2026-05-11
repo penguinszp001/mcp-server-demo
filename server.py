@@ -137,110 +137,15 @@ def _run_tool_with_logging(tool_name: str, tool_args: dict[str, Any], fn: Any) -
 
 
 
-def _stage_log(stage: str, **fields: Any) -> None:
-    payload = {"event": stage}
-    payload.update(fields)
-    _write_tool_event(payload)
-
-
-def _printable_text_ratio(text: str) -> float:
-    if not text:
-        return 0.0
-    printable = sum(1 for ch in text if ch.isprintable() or ch in "\n\t\r")
-    return printable / len(text)
-
-
-def _quality_score(text: str) -> dict[str, Any]:
-    char_count = len(text)
-    whitespace_ratio = (sum(1 for ch in text if ch.isspace()) / char_count) if char_count else 1.0
-    printable_ratio = _printable_text_ratio(text)
-    quality_ok = char_count >= 80 and printable_ratio >= 0.85 and whitespace_ratio < 0.7
-    return {
-        "char_count": char_count,
-        "printable_text_ratio": round(printable_ratio, 4),
-        "whitespace_ratio": round(whitespace_ratio, 4),
-        "quality_ok": quality_ok,
-    }
-
-
-def _classify_file(path: Path) -> dict[str, Any]:
-    extension = path.suffix.lower()
-    mime_type, _ = mimetypes.guess_type(str(path))
-    capability = "unsupported"
-    page_count = None
-    has_embedded_text = None
-    if extension in {".txt", ".md"}:
-        capability = "direct_text"
-    elif extension == ".docx":
-        capability = "docx_parse"
-    elif extension == ".pdf":
-        capability = "pdf_unknown"
-        reader = PdfReader(str(path))
-        page_count = len(reader.pages)
-        probe = "\n".join((reader.pages[i].extract_text() or "") for i in range(min(2, page_count)))
-        has_embedded_text = bool(probe.strip())
-        capability = "digitally_extractable_pdf" if has_embedded_text else "likely_scanned_pdf"
-
-    profile = {
-        "path": str(path),
-        "name": path.name,
-        "extension": extension,
-        "mime_type": mime_type or "application/octet-stream",
-        "size_bytes": path.stat().st_size,
-        "page_count": page_count,
-        "has_embedded_text": has_embedded_text,
-        "capability_profile": capability,
-    }
-    _stage_log("classify_file", profile=profile)
-    return profile
-
-
-def _build_extraction_plan(profile: dict[str, Any]) -> dict[str, Any]:
-    ext = profile["extension"]
-    if ext in {".txt", ".md"}:
-        methods = ["direct_text_read"]
-    elif ext == ".docx":
-        methods = ["docx_parse"]
-    elif ext == ".pdf":
-        methods = ["digital_pdf_parse", "ocr_pdf_fallback"]
-    else:
-        methods = []
-    plan = {"file": profile["path"], "methods": methods}
-    _stage_log("plan_created", plan=plan)
-    return plan
-
-
-def _extract_via_plan(path: Path, plan: dict[str, Any], model: str = "gpt-4.1-mini") -> dict[str, Any]:
-    attempts = []
-    for method in plan["methods"]:
-        _stage_log("extract_attempt", file=str(path), method=method)
-        if method == "direct_text_read":
-            text = path.read_text(encoding="utf-8")
-        elif method == "docx_parse":
-            text = _extract_text_from_docx(path)
-        elif method == "digital_pdf_parse":
-            text = _extract_text_from_digital_pdf(path)
-        elif method == "ocr_pdf_fallback":
-            parsed = json.loads(extract_text_from_scanned_pdf(path=str(path.relative_to(_resolve_file_ops_path())), model=model))
-            text = parsed.get("text", "")
-        else:
-            continue
-
-        quality = _quality_score(text)
-        attempts.append({"method": method, "quality": quality})
-        if quality["quality_ok"]:
-            artifact = {
-                "source_metadata": _classify_file(path),
-                "extraction_method": method,
-                "quality": quality,
-                "extracted_text": text,
-                "attempts": attempts,
-            }
-            _stage_log("extract_success", file=str(path), method=method, quality=quality)
-            return artifact
-        _stage_log("extract_fallback", file=str(path), method=method, quality=quality)
-
-    raise ValueError(f"No extraction method met quality checks for {path}")
+# Planning-mode pipeline intentionally disabled for now.
+# The following helpers were added for staged extraction planning and quality-gated fallbacks:
+# - _stage_log
+# - _printable_text_ratio
+# - _quality_score
+# - _classify_file
+# - _build_extraction_plan
+# - _extract_via_plan
+# They are commented out until logging-only validation is complete.
 
 
 def _tool_with_logging(name: str):
@@ -550,10 +455,10 @@ def summarize_documents_in_folder(
                 skipped_files.append({"path": str(file_path), "reason": "unsupported_file_type"})
                 continue
             try:
-                profile = _classify_file(file_path)
-                plan = _build_extraction_plan(profile)
-                artifact = _extract_via_plan(file_path, plan, model=model)
-                text = artifact["extracted_text"]
+                text = extract_text_from_file(file_path)
+                if not text.strip():
+                    skipped_files.append({"path": str(file_path), "reason": "empty_or_unreadable_content"})
+                    continue
                 summary = _summarize_text_with_openai(text=text, prompt=prompt, model=model)
                 summaries.append(
                     {
@@ -561,7 +466,6 @@ def summarize_documents_in_folder(
                         "file_name": file_path.name,
                         "summary": summary,
                         "char_count": len(text),
-                        "artifact": {k: v for k, v in artifact.items() if k != "extracted_text"},
                     }
                 )
             except Exception as exc:
@@ -577,7 +481,6 @@ def summarize_documents_in_folder(
                 prompt=prompt or "Create an overall summary across these file summaries.",
                 model=model,
             )
-        _stage_log("task_run", task="summarize_documents_in_folder", processed_files=len(summaries))
         return json.dumps({
             "folder_path": str(folder),
             "max_files": max_files,
@@ -606,10 +509,9 @@ def review_contract_language(path: str, focus: str | None = None, model: str = "
         if target.suffix.lower() not in SUPPORTED_TEXT_EXTENSIONS:
             raise ValueError("Supported file types: .txt, .md, .pdf, .docx")
 
-        profile = _classify_file(target)
-        plan = _build_extraction_plan(profile)
-        artifact = _extract_via_plan(target, plan, model=model)
-        text = artifact["extracted_text"]
+        text = extract_text_from_file(target)
+        if not text.strip():
+            raise ValueError("No readable text extracted from file.")
 
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
@@ -631,8 +533,6 @@ def review_contract_language(path: str, focus: str | None = None, model: str = "
         output_text = response.output_text
         payload = json.loads(output_text)
         payload["document_path"] = str(target)
-        payload["artifact"] = {k: v for k, v in artifact.items() if k != "extracted_text"}
-        _stage_log("task_run", task="review_contract_language", file=str(target))
         payload["disclaimer"] = "This review is automated and is not legal advice."
         return json.dumps(payload, indent=2)
 
