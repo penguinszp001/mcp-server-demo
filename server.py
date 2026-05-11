@@ -8,6 +8,7 @@ import threading
 import time
 import base64
 import mimetypes
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,9 @@ import httpx
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 from openai import OpenAI
+from docx import Document
+from pypdf import PdfReader
+from pypdfium2 import PdfDocument
 
 load_dotenv()
 
@@ -74,6 +78,59 @@ def _resolve_file_ops_path(path: str | None = None) -> Path:
     if target != root and root not in target.parents:
         raise ValueError("Path escapes the configured MCP_FILE_OPS_ROOT.")
     return target
+
+
+SUPPORTED_TEXT_EXTENSIONS = {".txt", ".md", ".pdf", ".docx"}
+
+
+def _extract_text_from_digital_pdf(path: Path) -> str:
+    reader = PdfReader(str(path))
+    pages = [page.extract_text() or "" for page in reader.pages]
+    return "\n\n".join(pages).strip()
+
+
+def _extract_text_from_docx(path: Path) -> str:
+    document = Document(str(path))
+    paragraphs = [p.text for p in document.paragraphs if p.text]
+    return "\n".join(paragraphs).strip()
+
+
+def extract_text_from_file(path: Path) -> str:
+    extension = path.suffix.lower()
+    if extension in {".txt", ".md"}:
+        return path.read_text(encoding="utf-8")
+    if extension == ".pdf":
+        return _extract_text_from_digital_pdf(path)
+    if extension == ".docx":
+        return _extract_text_from_docx(path)
+    raise ValueError(f"Unsupported file type: {extension}")
+
+
+def _summarize_text_with_openai(text: str, prompt: str | None = None, model: str = "gpt-4.1-mini") -> str:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY is not configured.")
+
+    guidance = prompt or "Summarize the main points, key obligations, and notable risks."
+    client = OpenAI(api_key=api_key)
+    response = client.responses.create(
+        model=model,
+        input=[
+            {
+                "role": "system",
+                "content": "You are a concise document summarization assistant.",
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Guidance: {guidance}\n\n"
+                    "Document text:\n"
+                    f"{text[:200000]}"
+                ),
+            },
+        ],
+    )
+    return response.output_text
 
 
 @mcp.tool()
@@ -263,6 +320,182 @@ def analyze_image_with_openai(path: str, prompt: str, model: str = "gpt-4.1-mini
         ],
     )
     return response.output_text
+
+
+@mcp.tool()
+def summarize_documents_in_folder(
+    folder_path: str,
+    prompt: str | None = None,
+    max_files: int = 50,
+    model: str = "gpt-4.1-mini",
+) -> str:
+    """Summarize supported documents in a folder and return per-file + overall summaries."""
+    if max_files < 1:
+        raise ValueError("max_files must be at least 1.")
+    folder = _resolve_file_ops_path(folder_path)
+    if not folder.is_dir():
+        raise ValueError(f"Not a directory: {folder}")
+
+    files = [p for p in sorted(folder.iterdir()) if p.is_file()][:max_files]
+    summaries: list[dict[str, Any]] = []
+    skipped_files: list[dict[str, str]] = []
+
+    for file_path in files:
+        if file_path.suffix.lower() not in SUPPORTED_TEXT_EXTENSIONS:
+            skipped_files.append({"path": str(file_path), "reason": "unsupported_file_type"})
+            continue
+        try:
+            text = extract_text_from_file(file_path)
+            if not text.strip():
+                skipped_files.append({"path": str(file_path), "reason": "empty_or_unreadable_content"})
+                continue
+            summary = _summarize_text_with_openai(text=text, prompt=prompt, model=model)
+            summaries.append(
+                {
+                    "path": str(file_path),
+                    "file_name": file_path.name,
+                    "summary": summary,
+                    "char_count": len(text),
+                }
+            )
+        except Exception as exc:
+            skipped_files.append({"path": str(file_path), "reason": str(exc)})
+
+    combined = "\n\n".join(
+        f"{item['file_name']}:\n{item['summary']}" for item in summaries
+    )[:200000]
+    overall_summary = ""
+    if combined:
+        overall_summary = _summarize_text_with_openai(
+            text=combined,
+            prompt=prompt or "Create an overall summary across these file summaries.",
+            model=model,
+        )
+
+    return json.dumps(
+        {
+            "folder_path": str(folder),
+            "max_files": max_files,
+            "processed_files": len(summaries),
+            "skipped_files": skipped_files,
+            "per_file_summaries": summaries,
+            "overall_summary": overall_summary,
+        },
+        indent=2,
+    )
+
+
+@mcp.tool()
+def review_contract_language(path: str, focus: str | None = None, model: str = "gpt-4.1-mini") -> str:
+    """Flag potentially misleading or risky contract language (not legal advice)."""
+    target = _resolve_file_ops_path(path)
+    if not target.is_file():
+        raise ValueError(f"File does not exist: {target}")
+    if target.suffix.lower() not in SUPPORTED_TEXT_EXTENSIONS:
+        raise ValueError("Supported file types: .txt, .md, .pdf, .docx")
+
+    text = extract_text_from_file(target)
+    if not text.strip():
+        raise ValueError("No readable text extracted from file.")
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY is not configured.")
+
+    guidance = focus or "Find ambiguous, one-sided, vague, or potentially misleading language."
+    schema_prompt = (
+        "Return strict JSON with keys: potential_issues (array), disclaimer. "
+        "Each issue object must include: clause_excerpt, risk_type, severity, why_flagged, suggested_plain_language_revision."
+    )
+    client = OpenAI(api_key=api_key)
+    response = client.responses.create(
+        model=model,
+        input=[
+            {"role": "system", "content": "You are a contract risk reviewer. This is not legal advice."},
+            {"role": "user", "content": f"{schema_prompt}\nFocus: {guidance}\n\nContract text:\n{text[:200000]}"},
+        ],
+    )
+    output_text = response.output_text
+    payload = json.loads(output_text)
+    payload["document_path"] = str(target)
+    payload["disclaimer"] = "This review is automated and is not legal advice."
+    return json.dumps(payload, indent=2)
+
+
+@mcp.tool()
+def extract_text_from_scanned_pdf(path: str, max_pages: int = 20, model: str = "gpt-4.1-mini") -> str:
+    """Extract text from scanned/image PDFs by rendering pages and using vision."""
+    if max_pages < 1:
+        raise ValueError("max_pages must be at least 1.")
+    target = _resolve_file_ops_path(path)
+    if not target.is_file():
+        raise ValueError(f"File does not exist: {target}")
+    if target.suffix.lower() != ".pdf":
+        raise ValueError("This OCR tool only accepts .pdf files.")
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY is not configured.")
+    client = OpenAI(api_key=api_key)
+
+    pdf = PdfDocument(str(target))
+    page_count = len(pdf)
+    pages_to_process = min(page_count, max_pages)
+    extracted_pages: list[dict[str, Any]] = []
+    combined_parts: list[str] = []
+
+    for index in range(pages_to_process):
+        page = pdf[index]
+        image = page.render(scale=2).to_pil()
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+        page_b64 = base64.b64encode(buffer.getvalue()).decode("ascii")
+        data_url = f"data:image/png;base64,{page_b64}"
+        response = client.responses.create(
+            model=model,
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "Extract all readable text from this scanned page."},
+                        {"type": "input_image", "image_url": data_url},
+                    ],
+                }
+            ],
+        )
+        page_text = response.output_text.strip()
+        extracted_pages.append({"page_number": index + 1, "chars_extracted": len(page_text)})
+        combined_parts.append(f"[Page {index + 1}]\n{page_text}")
+
+    return json.dumps(
+        {
+            "path": str(target),
+            "total_pages": page_count,
+            "processed_pages": pages_to_process,
+            "truncated": page_count > max_pages,
+            "pages": extracted_pages,
+            "text": "\n\n".join(combined_parts),
+        },
+        indent=2,
+    )
+
+
+@mcp.tool()
+def write_text_file(path: str, content: str, overwrite: bool = False) -> str:
+    """Write a .txt file under MCP_FILE_OPS_ROOT."""
+    target = _resolve_file_ops_path(path)
+    if target.suffix.lower() != ".txt":
+        raise ValueError("Only .txt files can be written by this tool.")
+    if target.exists() and not overwrite:
+        raise ValueError(f"File already exists and overwrite is false: {target}")
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    encoded = content.encode("utf-8")
+    target.write_bytes(encoded)
+    return json.dumps(
+        {"path": str(target), "bytes_written": len(encoded), "overwrite": overwrite},
+        indent=2,
+    )
 
 
 def main() -> None:
