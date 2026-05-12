@@ -231,9 +231,17 @@ def _quality_from_text(text: str, min_chars: int = 50) -> str:
     return "ok"
 
 
-def _extract_via_plan(path: Path, plan: list[dict[str, Any]], model: str = "gpt-4.1-mini") -> dict[str, Any]:
+def _extract_via_plan(
+    path: Path,
+    plan: list[dict[str, Any]],
+    model: str = "gpt-4.1-mini",
+    max_attempts: int = 3,
+) -> dict[str, Any]:
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be at least 1.")
+
     attempts: list[dict[str, Any]] = []
-    for step in plan:
+    for step in plan[:max_attempts]:
         method = step["method"]
         try:
             if method == "native_text":
@@ -270,7 +278,7 @@ def _extract_via_plan(path: Path, plan: list[dict[str, Any]], model: str = "gpt-
         except Exception as exc:
             attempts.append({"method": method, "success": False, "error": str(exc)})
 
-    return {"text": "", "method": None, "quality": "empty", "attempts": attempts}
+    return {"text": "", "method": None, "quality": "empty", "attempts": attempts, "exhausted_plan": True}
 
 
 def extract_text_from_file(path: Path) -> str:
@@ -529,6 +537,7 @@ def summarize_documents_in_folder(
     prompt: str | None = None,
     max_files: int = 50,
     model: str = "gpt-4.1-mini",
+    max_extraction_attempts: int = 3,
 ) -> str:
     """Summarize supported documents in a folder and return per-file + overall summaries."""
     if max_files < 1:
@@ -548,7 +557,7 @@ def summarize_documents_in_folder(
             skipped_files.append({"path": str(file_path), "reason": "unsupported_file_type"})
             continue
         try:
-            extraction = _extract_via_plan(file_path, plan, model=model)
+            extraction = _extract_via_plan(file_path, plan, model=model, max_attempts=max_extraction_attempts)
             text = extraction["text"]
             if not text.strip():
                 skipped_files.append({"path": str(file_path), "reason": "empty_or_unreadable_content"})
@@ -608,7 +617,7 @@ def review_contract_language(path: str, focus: str | None = None, model: str = "
         if not plan:
             raise ValueError("Supported file types: .txt, .md, .pdf, .docx")
 
-        extraction = _extract_via_plan(target, plan, model=model)
+        extraction = _extract_via_plan(target, plan, model=model, max_attempts=3)
         text = extraction["text"]
         if not text.strip():
             raise ValueError("No readable text extracted from file.")
@@ -647,6 +656,61 @@ def review_contract_language(path: str, focus: str | None = None, model: str = "
         tool_args={"path": path, "focus": focus, "model": model},
         fn=_impl,
     )
+
+
+@mcp.tool()
+def summarize_document(
+    path: str,
+    prompt: str | None = None,
+    model: str = "gpt-4.1-mini",
+    max_extraction_attempts: int = 3,
+    output_txt_path: str | None = None,
+    overwrite_output: bool = False,
+) -> str:
+    """Summarize one document with extraction fallback; optionally write summary to a .txt file."""
+    target = _resolve_file_ops_path(path)
+    if not target.is_file():
+        raise ValueError(f"File does not exist: {target}")
+
+    classification = _classify_file(target)
+    plan = _build_extraction_plan(target, classification)
+    if not plan:
+        raise ValueError("Unsupported file type for summarization.")
+
+    extraction = _extract_via_plan(
+        target,
+        plan,
+        model=model,
+        max_attempts=max_extraction_attempts,
+    )
+    text = extraction["text"]
+    if not text.strip():
+        raise ValueError("No readable text extracted from file after fallback attempts.")
+
+    summary = _summarize_text_with_openai(text=text, prompt=prompt, model=model)
+    result: dict[str, Any] = {
+        "document_path": str(target),
+        "summary": summary,
+        "char_count": len(text),
+        "artifact": {
+            "classification": classification,
+            "extraction_method": extraction["method"],
+            "quality": extraction["quality"],
+            "attempts": extraction["attempts"],
+        },
+    }
+
+    if output_txt_path:
+        output = _resolve_file_ops_path(output_txt_path)
+        if output.suffix.lower() != ".txt":
+            raise ValueError("output_txt_path must end with .txt")
+        if output.exists() and not overwrite_output:
+            raise ValueError(f"Output file exists and overwrite_output is false: {output}")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(summary, encoding="utf-8")
+        result["output_file"] = str(output)
+
+    return json.dumps(result, indent=2)
 
 
 @mcp.tool()

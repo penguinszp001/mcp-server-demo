@@ -71,6 +71,7 @@ A from-scratch local MCP server with tools for weather, SQLite reads, local file
 - `inspect_file(path, preview_chars=4000, include_base64=False)` → metadata + preview for text/csv/image files
 - `analyze_image_with_openai(path, prompt, model='gpt-4.1-mini')` → send image to OpenAI vision-capable model
 - `summarize_documents_in_folder(folder_path, prompt=None, max_files=50, model='gpt-4.1-mini')` → summarize supported docs (`.txt`, `.md`, `.pdf`, `.docx`) in a folder
+- `summarize_document(path, prompt=None, model='gpt-4.1-mini', max_extraction_attempts=3, output_txt_path=None, overwrite_output=False)` → summarize one document with extraction fallbacks
 - `review_contract_language(path, focus=None, model='gpt-4.1-mini')` → flag potentially ambiguous/risky contract language
 - `extract_text_from_scanned_pdf(path, max_pages=20, model='gpt-4.1-mini')` → OCR scanned PDFs with vision
 - `write_text_file(path, content, overwrite=False)` → safe `.txt` writes under `MCP_FILE_OPS_ROOT`
@@ -132,6 +133,12 @@ Returns JSON summary fields including temperature, feels-like, humidity, wind, a
   - per-file summaries
   - overall summary
   - processing metadata
+
+### `summarize_document(path: str, prompt: str | None = None, model: str = "gpt-4.1-mini", max_extraction_attempts: int = 3, output_txt_path: str | None = None, overwrite_output: bool = False)`
+- Safely resolves file under `MCP_FILE_OPS_ROOT`.
+- Uses classify → plan → extract behavior.
+- Applies fallback extraction (e.g., digital PDF first, then OCR), bounded by `max_extraction_attempts`.
+- Can optionally write the summary to `output_txt_path` (must be `.txt`).
 
 Example payload:
 ```json
