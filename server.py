@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import os
 import shutil
 import sqlite3
@@ -107,11 +108,19 @@ def _truncate_for_log(value: Any, max_chars: int = 2000) -> Any:
     return f"{as_text[:max_chars]}...<truncated>"
 
 
-def _run_tool_with_logging(tool_name: str, tool_args: dict[str, Any], fn: Any) -> str:
+def _run_tool_with_logging(
+    tool_name: str,
+    tool_args: dict[str, Any],
+    fn_to_call: Any,
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
     start = time.time()
     _write_tool_event({"event": "tool_start", "tool": tool_name, "args": _truncate_for_log(tool_args)})
     try:
-        result = fn()
+        if inspect.iscoroutinefunction(fn_to_call):
+            raise TypeError("Use _run_tool_async_with_logging for async tools.")
+        result = fn_to_call(*args, **kwargs)
         _write_tool_event(
             {
                 "event": "tool_success",
@@ -135,28 +144,38 @@ def _run_tool_with_logging(tool_name: str, tool_args: dict[str, Any], fn: Any) -
         raise
 
 
-
-
-# Planning-mode pipeline intentionally disabled for now.
-# The following helpers were added for staged extraction planning and quality-gated fallbacks:
-# - _stage_log
-# - _printable_text_ratio
-# - _quality_score
-# - _classify_file
-# - _build_extraction_plan
-# - _extract_via_plan
-# They are commented out until logging-only validation is complete.
-
-
-def _tool_with_logging(name: str):
-    def decorator(fn: Any) -> Any:
-        def wrapped(*args: Any, **kwargs: Any) -> str:
-            tool_args = kwargs.copy()
-            return _run_tool_with_logging(name, tool_args, lambda: fn(*args, **kwargs))
-
-        return wrapped
-
-    return decorator
+async def _run_tool_async_with_logging(
+    tool_name: str,
+    tool_args: dict[str, Any],
+    fn_to_call: Any,
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    start = time.time()
+    _write_tool_event({"event": "tool_start", "tool": tool_name, "args": _truncate_for_log(tool_args)})
+    try:
+        result = await fn_to_call(*args, **kwargs)
+        _write_tool_event(
+            {
+                "event": "tool_success",
+                "tool": tool_name,
+                "duration_ms": int((time.time() - start) * 1000),
+                "result_preview": _truncate_for_log(result),
+            }
+        )
+        return result
+    except Exception as exc:
+        _write_tool_event(
+            {
+                "event": "tool_error",
+                "tool": tool_name,
+                "duration_ms": int((time.time() - start) * 1000),
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "traceback": traceback.format_exc(),
+            }
+        )
+        raise
 
 def _extract_text_from_digital_pdf(path: Path) -> str:
     reader = PdfReader(str(path))
@@ -209,50 +228,50 @@ def _summarize_text_with_openai(text: str, prompt: str | None = None, model: str
 
 
 @mcp.tool()
-@_tool_with_logging("weather")
 def weather(city: str) -> str:
     """Return current weather for a city using wttr.in."""
-    response = httpx.get(f"https://wttr.in/{city}", params={"format": "j1"}, timeout=20)
-    response.raise_for_status()
-    data: dict[str, Any] = response.json()
-    current = data["current_condition"][0]
-
-    summary = {
-        "city": city,
-        "temp_c": current.get("temp_C"),
-        "temp_f": current.get("temp_F"),
-        "feels_like_c": current.get("FeelsLikeC"),
-        "description": current.get("weatherDesc", [{}])[0].get("value"),
-        "humidity": current.get("humidity"),
-        "wind_kmph": current.get("windspeedKmph"),
-    }
-    return json.dumps(summary, indent=2)
+    def _impl() -> str:
+        response = httpx.get(f"https://wttr.in/{city}", params={"format": "j1"}, timeout=20)
+        response.raise_for_status()
+        data: dict[str, Any] = response.json()
+        current = data["current_condition"][0]
+        summary = {
+            "city": city,
+            "temp_c": current.get("temp_C"),
+            "temp_f": current.get("temp_F"),
+            "feels_like_c": current.get("FeelsLikeC"),
+            "description": current.get("weatherDesc", [{}])[0].get("value"),
+            "humidity": current.get("humidity"),
+            "wind_kmph": current.get("windspeedKmph"),
+        }
+        return json.dumps(summary, indent=2)
+    return _run_tool_with_logging("weather", {"city": city}, _impl)
 
 
 @mcp.tool()
-@_tool_with_logging("query_db")
 def query_db(sql: str) -> str:
     """Run a read-only SELECT query against local SQLite demo.db."""
-    normalized = sql.strip().lower().rstrip(";")
-    if not normalized.startswith("select"):
-        raise ValueError("Only SELECT queries are allowed for this demo.")
-
-    with _db_connection() as conn:
-        rows = conn.execute(sql).fetchall()
-    return json.dumps([dict(r) for r in rows], indent=2)
+    def _impl() -> str:
+        normalized = sql.strip().lower().rstrip(";")
+        if not normalized.startswith("select"):
+            raise ValueError("Only SELECT queries are allowed for this demo.")
+        with _db_connection() as conn:
+            rows = conn.execute(sql).fetchall()
+        return json.dumps([dict(r) for r in rows], indent=2)
+    return _run_tool_with_logging("query_db", {"sql": sql}, _impl)
 
 
 @mcp.tool()
-@_tool_with_logging("make_directory")
 def make_directory(path: str) -> str:
     """Create a directory inside MCP_FILE_OPS_ROOT."""
-    target = _resolve_file_ops_path(path)
-    target.mkdir(parents=True, exist_ok=True)
-    return f"Created directory: {target}"
+    def _impl() -> str:
+        target = _resolve_file_ops_path(path)
+        target.mkdir(parents=True, exist_ok=True)
+        return f"Created directory: {target}"
+    return _run_tool_with_logging("make_directory", {"path": path}, _impl)
 
 
 @mcp.tool()
-@_tool_with_logging("move_file")
 def move_file(source_path: str, destination_path: str) -> str:
     """Move a file from source_path to destination_path inside MCP_FILE_OPS_ROOT."""
     source = _resolve_file_ops_path(source_path)
@@ -267,7 +286,6 @@ def move_file(source_path: str, destination_path: str) -> str:
 
 
 @mcp.tool()
-@_tool_with_logging("move_files_by_glob")
 def move_files_by_glob(source_dir: str, pattern: str, destination_dir: str) -> str:
     """Move all files matching a glob pattern from source_dir into destination_dir."""
     source_root = _resolve_file_ops_path(source_dir)
@@ -305,7 +323,6 @@ def move_files_by_glob(source_dir: str, pattern: str, destination_dir: str) -> s
 
 
 @mcp.tool()
-@_tool_with_logging("list_files")
 def list_files(path: str = ".") -> str:
     """List only files in a folder; for general content checks use list_directory_contents."""
     target = _resolve_file_ops_path(path)
@@ -317,7 +334,6 @@ def list_files(path: str = ".") -> str:
 
 
 @mcp.tool()
-@_tool_with_logging("list_directories")
 def list_directories(path: str = ".") -> str:
     """List only directories in a folder; for general content checks use list_directory_contents."""
     target = _resolve_file_ops_path(path)
@@ -329,7 +345,6 @@ def list_directories(path: str = ".") -> str:
 
 
 @mcp.tool()
-@_tool_with_logging("list_directory_contents")
 def list_directory_contents(path: str = ".") -> str:
     """Primary directory listing tool: return both files and directories in one response."""
     target = _resolve_file_ops_path(path)
@@ -353,17 +368,17 @@ def list_directory_contents(path: str = ".") -> str:
 
 
 @mcp.tool()
-@_tool_with_logging("read_file")
 def read_file(path: str) -> str:
     """Read a UTF-8 text file inside MCP_FILE_OPS_ROOT."""
-    target = _resolve_file_ops_path(path)
-    if not target.is_file():
-        raise ValueError(f"File does not exist: {target}")
-    return target.read_text(encoding="utf-8")
+    def _impl() -> str:
+        target = _resolve_file_ops_path(path)
+        if not target.is_file():
+            raise ValueError(f"File does not exist: {target}")
+        return target.read_text(encoding="utf-8")
+    return _run_tool_with_logging("read_file", {"path": path}, _impl)
 
 
 @mcp.tool()
-@_tool_with_logging("inspect_file")
 def inspect_file(path: str, preview_chars: int = 4000, include_base64: bool = False) -> str:
     """Return file metadata and content preview for text/csv/image workflows."""
     target = _resolve_file_ops_path(path)
@@ -396,7 +411,6 @@ def inspect_file(path: str, preview_chars: int = 4000, include_base64: bool = Fa
 
 
 @mcp.tool()
-@_tool_with_logging("analyze_image_with_openai")
 def analyze_image_with_openai(path: str, prompt: str, model: str = "gpt-4.1-mini") -> str:
     """Analyze an image file with an OpenAI vision-capable model."""
     api_key = os.getenv("OPENAI_API_KEY")
@@ -544,7 +558,6 @@ def review_contract_language(path: str, focus: str | None = None, model: str = "
 
 
 @mcp.tool()
-@_tool_with_logging("extract_text_from_scanned_pdf")
 def extract_text_from_scanned_pdf(path: str, max_pages: int = 20, model: str = "gpt-4.1-mini") -> str:
     """Extract text from scanned/image PDFs by rendering pages and using vision."""
     if max_pages < 1:
@@ -603,7 +616,6 @@ def extract_text_from_scanned_pdf(path: str, max_pages: int = 20, model: str = "
 
 
 @mcp.tool()
-@_tool_with_logging("write_text_file")
 def write_text_file(path: str, content: str, overwrite: bool = False) -> str:
     """Write a .txt file under MCP_FILE_OPS_ROOT."""
     target = _resolve_file_ops_path(path)
