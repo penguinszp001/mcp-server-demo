@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import functools
+import inspect
 import os
 import shutil
 import sqlite3
@@ -150,9 +152,40 @@ def _run_tool_with_logging(tool_name: str, tool_args: dict[str, Any], fn: Any) -
 
 def _tool_with_logging(name: str):
     def decorator(fn: Any) -> Any:
-        def wrapped(*args: Any, **kwargs: Any) -> str:
-            tool_args = kwargs.copy()
-            return _run_tool_with_logging(name, tool_args, lambda: fn(*args, **kwargs))
+        if inspect.iscoroutinefunction(fn):
+            @functools.wraps(fn)
+            async def wrapped(*args: Any, **kwargs: Any) -> str:
+                tool_args = kwargs.copy()
+                start = time.time()
+                _write_tool_event({"event": "tool_start", "tool": name, "args": _truncate_for_log(tool_args)})
+                try:
+                    result = await fn(*args, **kwargs)
+                    _write_tool_event(
+                        {
+                            "event": "tool_success",
+                            "tool": name,
+                            "duration_ms": int((time.time() - start) * 1000),
+                            "result_preview": _truncate_for_log(result),
+                        }
+                    )
+                    return result
+                except Exception as exc:
+                    _write_tool_event(
+                        {
+                            "event": "tool_error",
+                            "tool": name,
+                            "duration_ms": int((time.time() - start) * 1000),
+                            "error_type": type(exc).__name__,
+                            "error": str(exc),
+                            "traceback": traceback.format_exc(),
+                        }
+                    )
+                    raise
+        else:
+            @functools.wraps(fn)
+            def wrapped(*args: Any, **kwargs: Any) -> str:
+                tool_args = kwargs.copy()
+                return _run_tool_with_logging(name, tool_args, lambda: fn(*args, **kwargs))
 
         return wrapped
 
