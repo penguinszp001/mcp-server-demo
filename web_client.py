@@ -9,6 +9,14 @@ import streamlit as st
 from dotenv import load_dotenv
 from openai import APIStatusError, OpenAI
 
+CALENDAR_SYSTEM_INSTRUCTION = (
+    "For list_google_calendar_events, always provide explicit RFC3339 time_min and time_max in "
+    "America/New_York. If user does not provide a window, use now through end of current week "
+    "(Sunday 23:59:59.999) in America/New_York. Resolve vague windows like 'next week', 'this week', "
+    "'tomorrow', and 'upcoming' into explicit time_min/time_max before calling tools. Present all "
+    "calendar references and summaries in Eastern Time."
+)
+
 load_dotenv()
 
 st.set_page_config(page_title="MCP Chat Client", page_icon="💬", layout="centered")
@@ -58,7 +66,7 @@ if prompt:
             try:
                 response = client.responses.create(
                     model=model,
-                    input=st.session_state.messages,
+                    input=[{"role": "system", "content": CALENDAR_SYSTEM_INSTRUCTION}, *st.session_state.messages],
                     tools=[
                         {
                             "type": "mcp",

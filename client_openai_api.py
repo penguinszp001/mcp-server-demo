@@ -15,6 +15,13 @@ from dotenv import load_dotenv
 
 from openai import APIStatusError, OpenAI
 
+CALENDAR_SYSTEM_INSTRUCTION = (
+    "For list_google_calendar_events, always provide explicit RFC3339 time_min and time_max in "
+    "America/New_York. If user does not provide a window, use now through end of current week "
+    "(Sunday 23:59:59.999) in America/New_York. Resolve vague windows like 'next week', 'this week', "
+    "'tomorrow', and 'upcoming' into explicit time_min/time_max before calling tools. Present all "
+    "calendar references and summaries in Eastern Time."
+)
 
 
 CLIENT_LOG_PATH = Path(os.getenv("MCP_CLIENT_LOG_PATH", "mcp_client_events.jsonl"))
@@ -78,7 +85,10 @@ def main() -> None:
         try:
             response = client.responses.create(
                 model="gpt-4.1-mini",
-                input=user_query,
+                input=[
+                    {"role": "system", "content": CALENDAR_SYSTEM_INSTRUCTION},
+                    {"role": "user", "content": user_query},
+                ],
                 tools=[
                     {
                         "type": "mcp",
