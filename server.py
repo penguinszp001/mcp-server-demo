@@ -141,7 +141,16 @@ def _run_tool_with_logging(tool_name: str, tool_args: dict[str, Any], fn: Any) -
 
 
 def _get_google_calendar_service() -> Any:
-    creds_path = Path(os.getenv("GOOGLE_CALENDAR_CREDENTIALS_PATH", "google_credentials.json")).expanduser()
+    creds_env = os.getenv("GOOGLE_CALENDAR_CREDENTIALS_PATH")
+    if creds_env:
+        creds_path = Path(creds_env).expanduser()
+    else:
+        default_path = Path("google_credentials.json")
+        if default_path.exists():
+            creds_path = default_path
+        else:
+            matches = sorted(Path(".").glob("client_secret*.json"))
+            creds_path = matches[0] if matches else default_path
     token_path = Path(os.getenv("GOOGLE_CALENDAR_TOKEN_PATH", "google_token.json")).expanduser()
 
     creds: Credentials | None = None
@@ -155,7 +164,7 @@ def _get_google_calendar_service() -> Any:
             if not creds_path.exists():
                 raise ValueError(
                     f"Google credentials file not found: {creds_path}. "
-                    "Create an OAuth desktop client in Google Cloud and save the JSON credentials file there."
+                    "Set GOOGLE_CALENDAR_CREDENTIALS_PATH in .env to your downloaded client_secret JSON file."
                 )
             flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), GOOGLE_CALENDAR_SCOPES)
             creds = flow.run_local_server(port=0)
