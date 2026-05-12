@@ -65,8 +65,9 @@ A from-scratch local MCP server with tools for weather, SQLite reads, local file
 - `make_directory(path)` → create directories inside `MCP_FILE_OPS_ROOT`
 - `move_file(source_path, destination_path)` → move files inside `MCP_FILE_OPS_ROOT`
 - `move_files_by_glob(source_dir, pattern, destination_dir)` → move many files in one call (e.g., `*.txt`)
-- `list_files(path=".")` → list files in a folder inside `MCP_FILE_OPS_ROOT`
-- `list_directories(path=".")` → list directories in a folder inside `MCP_FILE_OPS_ROOT`
+- `list_files(path=".", include_metadata=False)` → list files; optionally include file size + modified time
+- `list_directories(path=".", include_metadata=False)` → list directories; optionally include modified time
+- `list_directory_contents(path=".", include_metadata=False)` → list files + folders together; can include per-item metadata
 - `read_file(path)` → read text files inside `MCP_FILE_OPS_ROOT`
 - `inspect_file(path, preview_chars=4000, include_base64=False)` → metadata + preview for text/csv/image files
 - `analyze_image_with_openai(path, prompt, model='gpt-4.1-mini')` → send image to OpenAI vision-capable model
