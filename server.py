@@ -147,6 +147,132 @@ def _extract_text_from_docx(path: Path) -> str:
     return "\n".join(paragraphs).strip()
 
 
+def _ocr_pdf_with_openai(path: Path, model: str = "gpt-4.1-mini", max_pages: int = 20) -> dict[str, Any]:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY is not configured.")
+    client = OpenAI(api_key=api_key)
+
+    pdf = PdfDocument(str(path))
+    page_count = len(pdf)
+    pages_to_process = min(page_count, max_pages)
+    extracted_pages: list[dict[str, Any]] = []
+    combined_parts: list[str] = []
+
+    for index in range(pages_to_process):
+        page = pdf[index]
+        image = page.render(scale=2).to_pil()
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+        page_b64 = base64.b64encode(buffer.getvalue()).decode("ascii")
+        data_url = f"data:image/png;base64,{page_b64}"
+        response = client.responses.create(
+            model=model,
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "Extract all readable text from this scanned page."},
+                        {"type": "input_image", "image_url": data_url},
+                    ],
+                }
+            ],
+        )
+        page_text = response.output_text.strip()
+        extracted_pages.append({"page_number": index + 1, "chars_extracted": len(page_text)})
+        combined_parts.append(f"[Page {index + 1}]\n{page_text}")
+
+    return {
+        "text": "\n\n".join(combined_parts),
+        "metadata": {
+            "total_pages": page_count,
+            "processed_pages": pages_to_process,
+            "truncated": page_count > max_pages,
+            "pages": extracted_pages,
+        },
+    }
+
+
+def _classify_file(path: Path) -> dict[str, Any]:
+    extension = path.suffix.lower()
+    mime_type, _ = mimetypes.guess_type(str(path))
+    mime_type = mime_type or "application/octet-stream"
+    is_image = mime_type.startswith("image/")
+    is_text_like = extension in {".txt", ".md", ".docx"} or mime_type.startswith("text/")
+    supports_digital_pdf = extension == ".pdf"
+    supports_ocr = supports_digital_pdf or is_image
+    return {
+        "extension": extension,
+        "mime_type": mime_type,
+        "is_image": is_image,
+        "is_text_like": is_text_like,
+        "supports_digital_pdf": supports_digital_pdf,
+        "supports_ocr": supports_ocr,
+    }
+
+
+def _build_extraction_plan(path: Path, classification: dict[str, Any]) -> list[dict[str, Any]]:
+    extension = classification["extension"]
+    if extension in {".txt", ".md", ".docx"}:
+        return [{"method": "native_text"}]
+    if extension == ".pdf":
+        return [{"method": "digital_pdf"}, {"method": "ocr_pdf"}]
+    if classification["is_image"]:
+        return [{"method": "ocr_image"}]
+    return []
+
+
+def _quality_from_text(text: str, min_chars: int = 50) -> str:
+    stripped = text.strip()
+    if not stripped:
+        return "empty"
+    if len(stripped) < min_chars:
+        return "low"
+    return "ok"
+
+
+def _extract_via_plan(path: Path, plan: list[dict[str, Any]], model: str = "gpt-4.1-mini") -> dict[str, Any]:
+    attempts: list[dict[str, Any]] = []
+    for step in plan:
+        method = step["method"]
+        try:
+            if method == "native_text":
+                text = extract_text_from_file(path)
+                quality = _quality_from_text(text)
+                attempts.append({"method": method, "success": True, "quality": quality, "chars_extracted": len(text)})
+                if quality == "ok":
+                    return {"text": text, "method": method, "quality": quality, "attempts": attempts}
+            elif method == "digital_pdf":
+                text = _extract_text_from_digital_pdf(path)
+                quality = _quality_from_text(text)
+                attempts.append({"method": method, "success": True, "quality": quality, "chars_extracted": len(text)})
+                if quality == "ok":
+                    return {"text": text, "method": method, "quality": quality, "attempts": attempts}
+            elif method == "ocr_pdf":
+                ocr = _ocr_pdf_with_openai(path=path, model=model)
+                text = ocr["text"]
+                quality = _quality_from_text(text)
+                attempts.append(
+                    {
+                        "method": method,
+                        "success": True,
+                        "quality": quality,
+                        "chars_extracted": len(text),
+                        "ocr": ocr["metadata"],
+                    }
+                )
+                if quality != "empty":
+                    return {"text": text, "method": method, "quality": quality, "attempts": attempts}
+            elif method == "ocr_image":
+                raise ValueError("Image OCR extraction is not yet implemented.")
+            else:
+                attempts.append({"method": method, "success": False, "error": "unknown_extraction_method"})
+        except Exception as exc:
+            attempts.append({"method": method, "success": False, "error": str(exc)})
+
+    return {"text": "", "method": None, "quality": "empty", "attempts": attempts}
+
+
 def extract_text_from_file(path: Path) -> str:
     extension = path.suffix.lower()
     if extension in {".txt", ".md"}:
@@ -416,11 +542,14 @@ def summarize_documents_in_folder(
     skipped_files: list[dict[str, str]] = []
 
     for file_path in files:
-        if file_path.suffix.lower() not in SUPPORTED_TEXT_EXTENSIONS:
+        classification = _classify_file(file_path)
+        plan = _build_extraction_plan(file_path, classification)
+        if not plan:
             skipped_files.append({"path": str(file_path), "reason": "unsupported_file_type"})
             continue
         try:
-            text = extract_text_from_file(file_path)
+            extraction = _extract_via_plan(file_path, plan, model=model)
+            text = extraction["text"]
             if not text.strip():
                 skipped_files.append({"path": str(file_path), "reason": "empty_or_unreadable_content"})
                 continue
@@ -431,6 +560,12 @@ def summarize_documents_in_folder(
                     "file_name": file_path.name,
                     "summary": summary,
                     "char_count": len(text),
+                    "artifact": {
+                        "classification": classification,
+                        "extraction_method": extraction["method"],
+                        "quality": extraction["quality"],
+                        "attempts": extraction["attempts"],
+                    },
                 }
             )
         except Exception as exc:
@@ -468,10 +603,13 @@ def review_contract_language(path: str, focus: str | None = None, model: str = "
         target = _resolve_file_ops_path(path)
         if not target.is_file():
             raise ValueError(f"File does not exist: {target}")
-        if target.suffix.lower() not in SUPPORTED_TEXT_EXTENSIONS:
+        classification = _classify_file(target)
+        plan = _build_extraction_plan(target, classification)
+        if not plan:
             raise ValueError("Supported file types: .txt, .md, .pdf, .docx")
 
-        text = extract_text_from_file(target)
+        extraction = _extract_via_plan(target, plan, model=model)
+        text = extraction["text"]
         if not text.strip():
             raise ValueError("No readable text extracted from file.")
 
@@ -495,6 +633,12 @@ def review_contract_language(path: str, focus: str | None = None, model: str = "
         output_text = response.output_text
         payload = json.loads(output_text)
         payload["document_path"] = str(target)
+        payload["artifact"] = {
+            "classification": classification,
+            "extraction_method": extraction["method"],
+            "quality": extraction["quality"],
+            "attempts": extraction["attempts"],
+        }
         payload["disclaimer"] = "This review is automated and is not legal advice."
         return json.dumps(payload, indent=2)
 
@@ -516,48 +660,16 @@ def extract_text_from_scanned_pdf(path: str, max_pages: int = 20, model: str = "
     if target.suffix.lower() != ".pdf":
         raise ValueError("This OCR tool only accepts .pdf files.")
 
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise ValueError("OPENAI_API_KEY is not configured.")
-    client = OpenAI(api_key=api_key)
-
-    pdf = PdfDocument(str(target))
-    page_count = len(pdf)
-    pages_to_process = min(page_count, max_pages)
-    extracted_pages: list[dict[str, Any]] = []
-    combined_parts: list[str] = []
-
-    for index in range(pages_to_process):
-        page = pdf[index]
-        image = page.render(scale=2).to_pil()
-        buffer = BytesIO()
-        image.save(buffer, format="PNG")
-        page_b64 = base64.b64encode(buffer.getvalue()).decode("ascii")
-        data_url = f"data:image/png;base64,{page_b64}"
-        response = client.responses.create(
-            model=model,
-            input=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "input_text", "text": "Extract all readable text from this scanned page."},
-                        {"type": "input_image", "image_url": data_url},
-                    ],
-                }
-            ],
-        )
-        page_text = response.output_text.strip()
-        extracted_pages.append({"page_number": index + 1, "chars_extracted": len(page_text)})
-        combined_parts.append(f"[Page {index + 1}]\n{page_text}")
+    ocr = _ocr_pdf_with_openai(path=target, model=model, max_pages=max_pages)
 
     return json.dumps(
         {
             "path": str(target),
-            "total_pages": page_count,
-            "processed_pages": pages_to_process,
-            "truncated": page_count > max_pages,
-            "pages": extracted_pages,
-            "text": "\n\n".join(combined_parts),
+            "total_pages": ocr["metadata"]["total_pages"],
+            "processed_pages": ocr["metadata"]["processed_pages"],
+            "truncated": ocr["metadata"]["truncated"],
+            "pages": ocr["metadata"]["pages"],
+            "text": ocr["text"],
         },
         indent=2,
     )
