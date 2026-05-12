@@ -16,6 +16,10 @@ from typing import Any
 
 import httpx
 from dotenv import load_dotenv
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
 from mcp.server.fastmcp import FastMCP
 from openai import OpenAI
 from docx import Document
@@ -83,6 +87,7 @@ def _resolve_file_ops_path(path: str | None = None) -> Path:
 
 
 SUPPORTED_TEXT_EXTENSIONS = {".txt", ".md", ".pdf", ".docx"}
+GOOGLE_CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
 
 
 LOG_PATH = Path(os.getenv("MCP_TOOL_LOG_PATH", "mcp_tool_events.jsonl"))
@@ -133,6 +138,40 @@ def _run_tool_with_logging(tool_name: str, tool_args: dict[str, Any], fn: Any) -
             }
         )
         raise
+
+
+def _get_google_calendar_service() -> Any:
+    creds_env = os.getenv("GOOGLE_CALENDAR_CREDENTIALS_PATH")
+    if creds_env:
+        creds_path = Path(creds_env).expanduser()
+    else:
+        default_path = Path("google_credentials.json")
+        if default_path.exists():
+            creds_path = default_path
+        else:
+            matches = sorted(Path(".").glob("client_secret*.json"))
+            creds_path = matches[0] if matches else default_path
+    token_path = Path(os.getenv("GOOGLE_CALENDAR_TOKEN_PATH", "google_token.json")).expanduser()
+
+    creds: Credentials | None = None
+    if token_path.exists():
+        creds = Credentials.from_authorized_user_file(str(token_path), GOOGLE_CALENDAR_SCOPES)
+
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            if not creds_path.exists():
+                raise ValueError(
+                    f"Google credentials file not found: {creds_path}. "
+                    "Set GOOGLE_CALENDAR_CREDENTIALS_PATH in .env to your downloaded client_secret JSON file."
+                )
+            flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), GOOGLE_CALENDAR_SCOPES)
+            creds = flow.run_local_server(port=0)
+        token_path.parent.mkdir(parents=True, exist_ok=True)
+        token_path.write_text(creds.to_json(), encoding="utf-8")
+
+    return build("calendar", "v3", credentials=creds)
 
 
 def _extract_text_from_digital_pdf(path: Path) -> str:
@@ -337,6 +376,123 @@ def weather(city: str) -> str:
         "wind_kmph": current.get("windspeedKmph"),
     }
     return json.dumps(summary, indent=2)
+
+
+@mcp.tool()
+def list_google_calendar_events(
+    calendar_id: str = "primary",
+    time_min: str | None = None,
+    time_max: str | None = None,
+    max_results: int = 20,
+) -> str:
+    """List existing Google Calendar events. Uses OAuth desktop flow and stores token locally."""
+    if max_results < 1 or max_results > 250:
+        raise ValueError("max_results must be between 1 and 250.")
+
+    service = _get_google_calendar_service()
+    min_value = time_min or datetime.now(timezone.utc).isoformat()
+    response = (
+        service.events()
+        .list(
+            calendarId=calendar_id,
+            timeMin=min_value,
+            timeMax=time_max,
+            maxResults=max_results,
+            singleEvents=True,
+            orderBy="startTime",
+        )
+        .execute()
+    )
+
+    events = response.get("items", [])
+    normalized = [
+        {
+            "id": event.get("id"),
+            "summary": event.get("summary"),
+            "description": event.get("description"),
+            "location": event.get("location"),
+            "status": event.get("status"),
+            "start": event.get("start", {}),
+            "end": event.get("end", {}),
+            "html_link": event.get("htmlLink"),
+        }
+        for event in events
+    ]
+    return json.dumps(
+        {
+            "calendar_id": calendar_id,
+            "time_min": min_value,
+            "time_max": time_max,
+            "count": len(normalized),
+            "events": normalized,
+        },
+        indent=2,
+    )
+
+
+@mcp.tool()
+def create_google_calendar_event(
+    summary: str,
+    start_iso: str,
+    end_iso: str,
+    calendar_id: str = "primary",
+    description: str | None = None,
+    location: str | None = None,
+    timezone_name: str = "UTC",
+) -> str:
+    """Create a new Google Calendar event using RFC3339 timestamps."""
+    service = _get_google_calendar_service()
+    event: dict[str, Any] = {
+        "summary": summary,
+        "start": {"dateTime": start_iso, "timeZone": timezone_name},
+        "end": {"dateTime": end_iso, "timeZone": timezone_name},
+    }
+    if description:
+        event["description"] = description
+    if location:
+        event["location"] = location
+
+    created = service.events().insert(calendarId=calendar_id, body=event).execute()
+    return json.dumps(
+        {
+            "id": created.get("id"),
+            "status": created.get("status"),
+            "html_link": created.get("htmlLink"),
+            "summary": created.get("summary"),
+            "start": created.get("start"),
+            "end": created.get("end"),
+        },
+        indent=2,
+    )
+
+
+# @mcp.tool()
+# def update_google_calendar_event(
+#     event_id: str,
+#     summary: str | None = None,
+#     description: str | None = None,
+#     location: str | None = None,
+#     calendar_id: str = "primary",
+# ) -> str:
+#     """Future option: update an existing Google Calendar event."""
+#     service = _get_google_calendar_service()
+#     event = service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+#     if summary is not None:
+#         event["summary"] = summary
+#     if description is not None:
+#         event["description"] = description
+#     if location is not None:
+#         event["location"] = location
+#     updated = service.events().update(calendarId=calendar_id, eventId=event_id, body=event).execute()
+#     return json.dumps(updated, indent=2)
+#
+#
+# @mcp.tool()
+# def delete_google_calendar_event(event_id: str, calendar_id: str = "primary") -> str:
+#     """Future option: delete an existing Google Calendar event."""
+#     service = _get_google_calendar_service()
+#     service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+#     return json.dumps({"deleted": True, "event_id": event_id, "calendar_id": calendar_id}, indent=2)
 
 
 @mcp.tool()
