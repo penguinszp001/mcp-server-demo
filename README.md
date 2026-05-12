@@ -124,15 +124,26 @@ Returns JSON summary fields including temperature, feels-like, humidity, wind, a
 
 ## Google Calendar setup (read + create)
 
+Use the steps below to enable Google Calendar read/create tools.
+
+### Step 1: Enable API + create OAuth client
 1. In Google Cloud Console, enable **Google Calendar API** and create an **OAuth client ID** for a desktop app.
+
+### Step 2: Download credentials JSON
 2. Download the client credentials JSON (often named `client_secret_....apps.googleusercontent.com.json`) and place it in the repo root.
+
+### Step 3: Configure `.env`
 3. In `.env`, set:
    - `GOOGLE_CALENDAR_CREDENTIALS_PATH=./client_secret_....apps.googleusercontent.com.json`
    - `GOOGLE_CALENDAR_TOKEN_PATH=./google_token.json`
-4. First tool run will open Google OAuth consent in a browser and create `google_token.json`.
+
+### Step 4: Complete first-time OAuth consent
+4. The first tool run opens Google OAuth consent in your browser and creates `google_token.json`.
+
+### Step 5: Start server + use calendar tools
 5. Start the MCP server and invoke either calendar tool.
 
-Environment variables:
+### Environment variables
 - `GOOGLE_CALENDAR_CREDENTIALS_PATH` (default `google_credentials.json`)
 - `GOOGLE_CALENDAR_TOKEN_PATH` (default `google_token.json`)
 
@@ -140,7 +151,7 @@ If `GOOGLE_CALENDAR_CREDENTIALS_PATH` is omitted, the server tries:
 1) `./google_credentials.json`
 2) first matching `./client_secret*.json`
 
-Both tools currently require `https://www.googleapis.com/auth/calendar.events` scope (read/create events). Update/delete helpers are included in `server.py` as commented examples for future use.
+Both tools currently require the `https://www.googleapis.com/auth/calendar.events` scope (read/create events). Update/delete helpers are included in `server.py` as commented examples for future use.
 
 ## New document + contract tools
 
