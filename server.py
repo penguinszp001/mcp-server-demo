@@ -411,44 +411,91 @@ def move_files_by_glob(source_dir: str, pattern: str, destination_dir: str) -> s
 
 
 @mcp.tool()
-def list_files(path: str = ".") -> str:
-    """List only files in a folder; for general content checks use list_directory_contents."""
+def list_files(path: str = ".", include_metadata: bool = False) -> str:
+    """List files in a folder; set include_metadata=True for size/modified timestamps."""
     target = _resolve_file_ops_path(path)
     if not target.is_dir():
         raise ValueError(f"Not a directory: {target}")
 
-    files = sorted(p.name for p in target.iterdir() if p.is_file())
-    return json.dumps(files, indent=2)
+    files = sorted(p for p in target.iterdir() if p.is_file())
+    if include_metadata:
+        response = [
+            {
+                "name": file_path.name,
+                "size_bytes": file_path.stat().st_size,
+                "modified_at": datetime.fromtimestamp(file_path.stat().st_mtime, tz=timezone.utc).isoformat(),
+            }
+            for file_path in files
+        ]
+    else:
+        response = [p.name for p in files]
+    return json.dumps(response, indent=2)
 
 
 @mcp.tool()
-def list_directories(path: str = ".") -> str:
-    """List only directories in a folder; for general content checks use list_directory_contents."""
+def list_directories(path: str = ".", include_metadata: bool = False) -> str:
+    """List directories in a folder; set include_metadata=True for modified timestamps."""
     target = _resolve_file_ops_path(path)
     if not target.is_dir():
         raise ValueError(f"Not a directory: {target}")
 
-    directories = sorted(p.name for p in target.iterdir() if p.is_dir())
-    return json.dumps(directories, indent=2)
+    directories = sorted(p for p in target.iterdir() if p.is_dir())
+    if include_metadata:
+        response = [
+            {
+                "name": dir_path.name,
+                "modified_at": datetime.fromtimestamp(dir_path.stat().st_mtime, tz=timezone.utc).isoformat(),
+            }
+            for dir_path in directories
+        ]
+    else:
+        response = [p.name for p in directories]
+    return json.dumps(response, indent=2)
 
 
 @mcp.tool()
-def list_directory_contents(path: str = ".") -> str:
+def list_directory_contents(path: str = ".", include_metadata: bool = False) -> str:
     """Primary directory listing tool: return both files and directories in one response."""
     target = _resolve_file_ops_path(path)
     if not target.is_dir():
         raise ValueError(f"Not a directory: {target}")
 
-    files = sorted(p.name for p in target.iterdir() if p.is_file())
-    directories = sorted(p.name for p in target.iterdir() if p.is_dir())
+    files = sorted(p for p in target.iterdir() if p.is_file())
+    directories = sorted(p for p in target.iterdir() if p.is_dir())
+
+    if include_metadata:
+        file_entries = []
+        for file_path in files:
+            stat = file_path.stat()
+            file_entries.append(
+                {
+                    "name": file_path.name,
+                    "size_bytes": stat.st_size,
+                    "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+                }
+            )
+
+        directory_entries = []
+        for dir_path in directories:
+            stat = dir_path.stat()
+            directory_entries.append(
+                {
+                    "name": dir_path.name,
+                    "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+                }
+            )
+    else:
+        file_entries = [p.name for p in files]
+        directory_entries = [p.name for p in directories]
 
     return json.dumps(
         {
             "path": str(target),
-            "file_count": len(files),
-            "directory_count": len(directories),
-            "files": files,
-            "directories": directories,
+            "file_count": len(file_entries),
+            "directory_count": len(directory_entries),
+            "files": file_entries,
+            "directories": directory_entries,
+            "metadata_included": include_metadata,
             "is_empty": len(files) == 0 and len(directories) == 0,
         },
         indent=2,
