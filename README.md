@@ -76,6 +76,8 @@ A from-scratch local MCP server with tools for weather, SQLite reads, local file
 - `review_contract_language(path, focus=None, model='gpt-4.1-mini')` → flag potentially ambiguous/risky contract language
 - `extract_text_from_scanned_pdf(path, max_pages=20, model='gpt-4.1-mini')` → OCR scanned PDFs with vision
 - `write_text_file(path, content, overwrite=False)` → safe `.txt` writes under `MCP_FILE_OPS_ROOT`
+- `list_google_calendar_events(calendar_id='primary', time_min=None, time_max=None, max_results=20)` → read existing Google Calendar events
+- `create_google_calendar_event(summary, start_iso, end_iso, ...)` → create a new Google Calendar event
 
 ## Notes
 
@@ -119,6 +121,19 @@ Returns JSON summary fields including temperature, feels-like, humidity, wind, a
 - All file operations are constrained to `MCP_FILE_OPS_ROOT`.
 - The server rejects paths that try to escape that root.
 - `MCP_FILE_OPS_ROOT` directories are created automatically if they do not exist.
+
+## Google Calendar setup (read + create)
+
+1. In Google Cloud Console, enable **Google Calendar API** and create an **OAuth client ID** for a desktop app.
+2. Download the client credentials JSON and save it as `google_credentials.json` (or set `GOOGLE_CALENDAR_CREDENTIALS_PATH`).
+3. Optionally set `GOOGLE_CALENDAR_TOKEN_PATH` for where the refresh/access token should be stored (default: `google_token.json`).
+4. Start the MCP server and invoke either calendar tool. On first run, a browser consent flow appears; after approval, token is saved for reuse.
+
+Environment variables:
+- `GOOGLE_CALENDAR_CREDENTIALS_PATH` (default `google_credentials.json`)
+- `GOOGLE_CALENDAR_TOKEN_PATH` (default `google_token.json`)
+
+Both tools currently require `https://www.googleapis.com/auth/calendar.events` scope (read/create events). Update/delete helpers are included in `server.py` as commented examples for future use.
 
 ## New document + contract tools
 
