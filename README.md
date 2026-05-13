@@ -76,7 +76,7 @@ A from-scratch local MCP server with tools for weather, SQLite reads, local file
 - `review_contract_language(path, focus=None, model='gpt-4.1-mini')` → flag potentially ambiguous/risky contract language
 - `extract_text_from_scanned_pdf(path, max_pages=20, model='gpt-4.1-mini')` → OCR scanned PDFs with vision
 - `write_text_file(path, content, overwrite=False)` → safe `.txt` writes under `MCP_FILE_OPS_ROOT`
-- `list_google_calendar_events(calendar_id='primary', time_min=None, time_max=None, max_results=20)` → read existing Google Calendar events
+- `list_google_calendar_events(calendar_id='primary', time_min=None, time_max=None, max_results=20)` → read existing Google Calendar events (always resolved to Eastern Time and a required time window)
 - `create_google_calendar_event(summary, start_iso, end_iso, ...)` → create a new Google Calendar event
 
 ## Notes
@@ -152,6 +152,37 @@ If `GOOGLE_CALENDAR_CREDENTIALS_PATH` is omitted, the server tries:
 2) first matching `./client_secret*.json`
 
 Both tools currently require the `https://www.googleapis.com/auth/calendar.events` scope (read/create events). Update/delete helpers are included in `server.py` as commented examples for future use.
+
+### Calendar window + timezone behavior
+- Eastern Time (`America/New_York`) is always used for calendar event queries.
+- A time window is always required/resolved for `list_google_calendar_events`.
+- If either `time_min` or `time_max` is missing, the server defaults to:
+  - `time_min`: current timestamp in ET
+  - `time_max`: end of current week in ET (Sunday `23:59:59.999`)
+- Tool output always includes:
+  - `resolved_time_min`
+  - `resolved_time_max`
+  - `resolved_timezone`
+
+Example request (no explicit window):
+```json
+{
+  "calendar_id": "primary",
+  "max_results": 20
+}
+```
+
+Example response (shape):
+```json
+{
+  "calendar_id": "primary",
+  "resolved_time_min": "2026-05-12T11:32:44.123456-04:00",
+  "resolved_time_max": "2026-05-17T23:59:59.999000-04:00",
+  "resolved_timezone": "America/New_York",
+  "count": 2,
+  "events": []
+}
+```
 
 ## New document + contract tools
 

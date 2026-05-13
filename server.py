@@ -9,10 +9,11 @@ import time
 import base64
 import mimetypes
 import traceback
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 from dotenv import load_dotenv
@@ -88,6 +89,7 @@ def _resolve_file_ops_path(path: str | None = None) -> Path:
 
 SUPPORTED_TEXT_EXTENSIONS = {".txt", ".md", ".pdf", ".docx"}
 GOOGLE_CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
+CALENDAR_TIMEZONE = ZoneInfo("America/New_York")
 
 
 LOG_PATH = Path(os.getenv("MCP_TOOL_LOG_PATH", "mcp_tool_events.jsonl"))
@@ -172,6 +174,63 @@ def _get_google_calendar_service() -> Any:
         token_path.write_text(creds.to_json(), encoding="utf-8")
 
     return build("calendar", "v3", credentials=creds)
+
+
+def get_now_et() -> datetime:
+    return datetime.now(CALENDAR_TIMEZONE)
+
+
+def get_default_current_week_window_et(now_et: datetime) -> tuple[datetime, datetime]:
+    end_of_week_date = (now_et + timedelta(days=(6 - now_et.weekday()))).date()
+    end_of_week = datetime.combine(end_of_week_date, datetime.max.time(), tzinfo=CALENDAR_TIMEZONE)
+    end_of_week = end_of_week.replace(microsecond=999000)
+    return now_et, end_of_week
+
+
+def _parse_window_bound_to_et(value: str) -> datetime:
+    normalized = value.strip().lower()
+    now_et = get_now_et()
+    if normalized in {"upcoming", "this week"}:
+        start, _ = get_default_current_week_window_et(now_et)
+        return start
+    if normalized == "tomorrow":
+        tomorrow = now_et + timedelta(days=1)
+        return tomorrow.replace(hour=0, minute=0, second=0, microsecond=0)
+    if normalized == "next week":
+        next_monday_date = (now_et + timedelta(days=(7 - now_et.weekday()))).date()
+        return datetime.combine(next_monday_date, datetime.min.time(), tzinfo=CALENDAR_TIMEZONE)
+
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=CALENDAR_TIMEZONE)
+    return parsed.astimezone(CALENDAR_TIMEZONE)
+
+
+def coerce_or_parse_window_et(time_min: str | None, time_max: str | None) -> tuple[datetime, datetime]:
+    now_et = get_now_et()
+    default_min, default_max = get_default_current_week_window_et(now_et)
+    if not time_min or not time_max:
+        resolved_min, resolved_max = default_min, default_max
+    elif time_min.strip().lower() == "next week" or time_max.strip().lower() == "next week":
+        next_monday_date = (now_et + timedelta(days=(7 - now_et.weekday()))).date()
+        week_start = datetime.combine(next_monday_date, datetime.min.time(), tzinfo=CALENDAR_TIMEZONE)
+        week_end_date = (week_start + timedelta(days=6)).date()
+        week_end = datetime.combine(week_end_date, datetime.max.time(), tzinfo=CALENDAR_TIMEZONE).replace(microsecond=999000)
+        resolved_min, resolved_max = week_start, week_end
+    elif time_min.strip().lower() == "tomorrow" or time_max.strip().lower() == "tomorrow":
+        tomorrow = now_et + timedelta(days=1)
+        start = tomorrow.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = tomorrow.replace(hour=23, minute=59, second=59, microsecond=999000)
+        resolved_min, resolved_max = start, end
+    elif time_min.strip().lower() in {"upcoming", "this week"} or time_max.strip().lower() in {"upcoming", "this week"}:
+        resolved_min, resolved_max = get_default_current_week_window_et(now_et)
+    else:
+        resolved_min = _parse_window_bound_to_et(time_min)
+        resolved_max = _parse_window_bound_to_et(time_max)
+
+    if resolved_max <= resolved_min:
+        raise ValueError("time_max must be greater than time_min.")
+    return resolved_min, resolved_max
 
 
 def _extract_text_from_digital_pdf(path: Path) -> str:
@@ -385,18 +444,20 @@ def list_google_calendar_events(
     time_max: str | None = None,
     max_results: int = 20,
 ) -> str:
-    """List existing Google Calendar events. Uses OAuth desktop flow and stores token locally."""
+    """List existing Google Calendar events in America/New_York within a resolved time window."""
     if max_results < 1 or max_results > 250:
         raise ValueError("max_results must be between 1 and 250.")
 
     service = _get_google_calendar_service()
-    min_value = time_min or datetime.now(timezone.utc).isoformat()
+    resolved_min_dt, resolved_max_dt = coerce_or_parse_window_et(time_min, time_max)
+    resolved_min = resolved_min_dt.isoformat()
+    resolved_max = resolved_max_dt.isoformat()
     response = (
         service.events()
         .list(
             calendarId=calendar_id,
-            timeMin=min_value,
-            timeMax=time_max,
+            timeMin=resolved_min,
+            timeMax=resolved_max,
             maxResults=max_results,
             singleEvents=True,
             orderBy="startTime",
@@ -421,8 +482,9 @@ def list_google_calendar_events(
     return json.dumps(
         {
             "calendar_id": calendar_id,
-            "time_min": min_value,
-            "time_max": time_max,
+            "resolved_time_min": resolved_min,
+            "resolved_time_max": resolved_max,
+            "resolved_timezone": "America/New_York",
             "count": len(normalized),
             "events": normalized,
         },

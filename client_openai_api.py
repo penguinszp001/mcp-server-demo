@@ -10,11 +10,32 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
 from openai import APIStatusError, OpenAI
 
+ET_TZ = ZoneInfo("America/New_York")
+
+CALENDAR_SYSTEM_INSTRUCTION = (
+    "For list_google_calendar_events, always provide explicit RFC3339 time_min and time_max in "
+    "America/New_York. If user does not provide a window, use now through end of current week "
+    "(Sunday 23:59:59.999) in America/New_York. Resolve vague windows like 'next week', 'this week', "
+    "'tomorrow', and 'upcoming' into explicit time_min/time_max before calling tools. Present all "
+    "calendar references and summaries in Eastern Time. If user asks for today's date or current date/time, "
+    "use the runtime date context provided below and do not guess."
+)
+
+
+def build_runtime_datetime_instruction() -> str:
+    now_et = datetime.now(ET_TZ)
+    now_utc = datetime.now(timezone.utc)
+    return (
+        f"Runtime datetime context: now_utc={now_utc.isoformat()}, "
+        f"now_america_new_york={now_et.isoformat()}, "
+        f"today_et={now_et.date().isoformat()}."
+    )
 
 
 CLIENT_LOG_PATH = Path(os.getenv("MCP_CLIENT_LOG_PATH", "mcp_client_events.jsonl"))
@@ -78,7 +99,11 @@ def main() -> None:
         try:
             response = client.responses.create(
                 model="gpt-4.1-mini",
-                input=user_query,
+                input=[
+                    {"role": "system", "content": CALENDAR_SYSTEM_INSTRUCTION},
+                    {"role": "system", "content": build_runtime_datetime_instruction()},
+                    {"role": "user", "content": user_query},
+                ],
                 tools=[
                     {
                         "type": "mcp",
