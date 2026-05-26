@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import sqlite3
+import csv
 import threading
 import time
 import base64
@@ -23,6 +24,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from mcp.server.fastmcp import FastMCP
 from openai import OpenAI
+from openpyxl import Workbook, load_workbook
 from docx import Document
 from pypdf import PdfReader
 from pypdfium2 import PdfDocument
@@ -88,6 +90,7 @@ def _resolve_file_ops_path(path: str | None = None) -> Path:
 
 
 SUPPORTED_TEXT_EXTENSIONS = {".txt", ".md", ".pdf", ".docx"}
+SUPPORTED_SPREADSHEET_EXTENSIONS = {".csv", ".tsv", ".xlsx"}
 GOOGLE_CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
 CALENDAR_TIMEZONE = ZoneInfo("America/New_York")
 
@@ -1018,6 +1021,294 @@ def write_text_file(path: str, content: str, overwrite: bool = False) -> str:
     target.write_bytes(encoded)
     return json.dumps(
         {"path": str(target), "bytes_written": len(encoded), "overwrite": overwrite},
+        indent=2,
+    )
+
+
+@mcp.tool()
+def create_spreadsheet(
+    path: str,
+    headers: list[str] | None = None,
+    overwrite: bool = False,
+    delimiter: str = "comma",
+) -> str:
+    """Create a new empty spreadsheet (.csv/.tsv/.xlsx) under MCP_FILE_OPS_ROOT."""
+    target = _resolve_file_ops_path(path)
+    suffix = target.suffix.lower()
+    if suffix not in SUPPORTED_SPREADSHEET_EXTENSIONS:
+        raise ValueError("Only .csv, .tsv, and .xlsx files are supported.")
+    if target.exists() and not overwrite:
+        raise ValueError(f"File already exists and overwrite is false: {target}")
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    normalized_headers = headers or []
+
+    if suffix == ".xlsx":
+        workbook = Workbook()
+        sheet = workbook.active
+        if normalized_headers:
+            for index, header in enumerate(normalized_headers, start=1):
+                sheet.cell(row=1, column=index, value=header)
+        workbook.save(target)
+        return json.dumps(
+            {
+                "path": str(target),
+                "format": "xlsx",
+                "headers_written": len(normalized_headers),
+                "overwrite": overwrite,
+            },
+            indent=2,
+        )
+
+    if delimiter not in {"comma", "tab"}:
+        raise ValueError("delimiter must be either 'comma' or 'tab'.")
+    separator = "," if delimiter == "comma" else "\t"
+    if suffix == ".csv":
+        separator = ","
+    if suffix == ".tsv":
+        separator = "\t"
+
+    content = ""
+    if normalized_headers:
+        content = separator.join(normalized_headers) + "\n"
+    target.write_text(content, encoding="utf-8")
+
+    return json.dumps(
+        {
+            "path": str(target),
+            "format": "csv" if separator == "," else "tsv",
+            "headers_written": len(normalized_headers),
+            "overwrite": overwrite,
+        },
+        indent=2,
+    )
+
+
+@mcp.tool()
+def edit_spreadsheet_cell(
+    path: str,
+    row_index: int,
+    column: str | int,
+    value: str,
+    has_header: bool = True,
+    create_if_missing: bool = False,
+) -> str:
+    """Edit one cell in a .csv/.tsv/.xlsx spreadsheet under MCP_FILE_OPS_ROOT."""
+    target = _resolve_file_ops_path(path)
+    suffix = target.suffix.lower()
+    if suffix not in SUPPORTED_SPREADSHEET_EXTENSIONS:
+        raise ValueError("Only .csv, .tsv, and .xlsx files are supported.")
+
+    if suffix == ".xlsx":
+        if not target.exists():
+            if not create_if_missing:
+                raise ValueError(f"Spreadsheet does not exist: {target}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            workbook = Workbook()
+            workbook.save(target)
+
+        workbook = load_workbook(target)
+        sheet = workbook.active
+
+        if row_index < 0:
+            raise ValueError("row_index must be >= 0.")
+
+        header_row_idx = 1 if has_header else None
+        data_start = 2 if has_header else 1
+        target_excel_row = data_start + row_index
+
+        if isinstance(column, int):
+            if column < 0:
+                raise ValueError("column (int) must be >= 0.")
+            target_col_idx = column + 1
+        else:
+            if not has_header:
+                raise ValueError("String column names require has_header=True.")
+
+            headers: list[str] = []
+            max_col = max(sheet.max_column, 1)
+            for col in range(1, max_col + 1):
+                cell_val = sheet.cell(row=header_row_idx, column=col).value
+                headers.append("" if cell_val is None else str(cell_val))
+
+            if column in headers:
+                target_col_idx = headers.index(column) + 1
+            else:
+                target_col_idx = len(headers) + 1
+                sheet.cell(row=header_row_idx, column=target_col_idx, value=column)
+
+        current_value = sheet.cell(row=target_excel_row, column=target_col_idx).value
+        previous_value = "" if current_value is None else str(current_value)
+        sheet.cell(row=target_excel_row, column=target_col_idx, value=value)
+        workbook.save(target)
+
+        return json.dumps(
+            {
+                "path": str(target),
+                "row_index": row_index,
+                "column": column,
+                "previous_value": previous_value,
+                "new_value": value,
+                "rows_written": sheet.max_row,
+                "delimiter": "xlsx",
+            },
+            indent=2,
+        )
+
+    delimiter = "," if suffix == ".csv" else "\t"
+    if not target.exists():
+        if not create_if_missing:
+            raise ValueError(f"Spreadsheet does not exist: {target}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("", encoding="utf-8")
+
+    with target.open("r", encoding="utf-8", newline="") as handle:
+        rows = list(csv.reader(handle, delimiter=delimiter))
+
+    if row_index < 0:
+        raise ValueError("row_index must be >= 0.")
+
+    header: list[str] | None = rows[0] if (has_header and rows) else None
+    data_start = 1 if (has_header and rows) else 0
+    absolute_row = data_start + row_index
+
+    while len(rows) <= absolute_row:
+        rows.append([])
+
+    if isinstance(column, int):
+        if column < 0:
+            raise ValueError("column (int) must be >= 0.")
+        col_index = column
+    else:
+        if not has_header:
+            raise ValueError("String column names require has_header=True.")
+        if header is None:
+            rows.insert(0, [])
+            header = rows[0]
+            data_start = 1
+            absolute_row = data_start + row_index
+            while len(rows) <= absolute_row:
+                rows.append([])
+        if column in header:
+            col_index = header.index(column)
+        else:
+            header.append(column)
+            col_index = len(header) - 1
+
+    target_row = rows[absolute_row]
+    while len(target_row) <= col_index:
+        target_row.append("")
+    previous_value = target_row[col_index]
+    target_row[col_index] = value
+
+    width = max((len(r) for r in rows), default=0)
+    normalized_rows = [r + [""] * (width - len(r)) for r in rows]
+    with target.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle, delimiter=delimiter)
+        writer.writerows(normalized_rows)
+
+    return json.dumps(
+        {
+            "path": str(target),
+            "row_index": row_index,
+            "column": column,
+            "previous_value": previous_value,
+            "new_value": value,
+            "rows_written": len(normalized_rows),
+            "delimiter": "csv" if delimiter == "," else "tsv",
+        },
+        indent=2,
+    )
+
+
+@mcp.tool()
+def append_spreadsheet_rows(
+    path: str,
+    rows: list[dict[str, Any] | list[str]],
+    has_header: bool = True,
+    create_if_missing: bool = False,
+) -> str:
+    """Append many rows in one operation to avoid repeated per-cell edits."""
+    if not rows:
+        raise ValueError("rows must include at least one row.")
+    target = _resolve_file_ops_path(path)
+    suffix = target.suffix.lower()
+    if suffix not in SUPPORTED_SPREADSHEET_EXTENSIONS:
+        raise ValueError("Only .csv, .tsv, and .xlsx files are supported.")
+
+    if suffix == ".xlsx":
+        if not target.exists():
+            if not create_if_missing:
+                raise ValueError(f"Spreadsheet does not exist: {target}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            Workbook().save(target)
+        workbook = load_workbook(target)
+        sheet = workbook.active
+        appended = 0
+        header_map: dict[str, int] = {}
+        if has_header:
+            max_col = max(sheet.max_column, 1)
+            for col in range(1, max_col + 1):
+                header_value = sheet.cell(row=1, column=col).value
+                if header_value is not None and str(header_value):
+                    header_map[str(header_value)] = col
+        for row in rows:
+            if isinstance(row, dict):
+                if not has_header:
+                    raise ValueError("Dict rows require has_header=True.")
+                for key in row.keys():
+                    if key not in header_map:
+                        new_col = (max(header_map.values()) if header_map else 0) + 1
+                        header_map[key] = new_col
+                        sheet.cell(row=1, column=new_col, value=key)
+                new_row_idx = sheet.max_row + 1
+                for key, value in row.items():
+                    sheet.cell(row=new_row_idx, column=header_map[key], value=str(value))
+            else:
+                sheet.append([str(v) for v in row])
+            appended += 1
+        workbook.save(target)
+        return json.dumps({"path": str(target), "rows_appended": appended, "format": "xlsx"}, indent=2)
+
+    delimiter = "," if suffix == ".csv" else "\t"
+    if not target.exists():
+        if not create_if_missing:
+            raise ValueError(f"Spreadsheet does not exist: {target}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("", encoding="utf-8")
+
+    with target.open("r", encoding="utf-8", newline="") as handle:
+        existing_rows = list(csv.reader(handle, delimiter=delimiter))
+
+    header: list[str] = existing_rows[0] if (has_header and existing_rows) else []
+    output_rows = existing_rows[:]
+    appended = 0
+    for row in rows:
+        if isinstance(row, dict):
+            if not has_header:
+                raise ValueError("Dict rows require has_header=True.")
+            if not output_rows:
+                output_rows.append([])
+                header = output_rows[0]
+            for key in row.keys():
+                if key not in header:
+                    header.append(key)
+            values = [""] * len(header)
+            for key, val in row.items():
+                values[header.index(key)] = str(val)
+            output_rows.append(values)
+        else:
+            output_rows.append([str(v) for v in row])
+        appended += 1
+
+    width = max((len(r) for r in output_rows), default=0)
+    normalized_rows = [r + [""] * (width - len(r)) for r in output_rows]
+    with target.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle, delimiter=delimiter)
+        writer.writerows(normalized_rows)
+
+    return json.dumps(
+        {"path": str(target), "rows_appended": appended, "format": "csv" if delimiter == "," else "tsv"},
         indent=2,
     )
 

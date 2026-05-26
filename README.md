@@ -76,6 +76,9 @@ A from-scratch local MCP server with tools for weather, SQLite reads, local file
 - `review_contract_language(path, focus=None, model='gpt-4.1-mini')` → flag potentially ambiguous/risky contract language
 - `extract_text_from_scanned_pdf(path, max_pages=20, model='gpt-4.1-mini')` → OCR scanned PDFs with vision
 - `write_text_file(path, content, overwrite=False)` → safe `.txt` writes under `MCP_FILE_OPS_ROOT`
+- `create_spreadsheet(path, headers=None, overwrite=False, delimiter='comma')` → create a new `.csv`/`.tsv`/`.xlsx` spreadsheet under `MCP_FILE_OPS_ROOT`
+- `edit_spreadsheet_cell(path, row_index, column, value, has_header=True, create_if_missing=False)` → create/edit one cell in `.csv`/`.tsv`/`.xlsx` spreadsheets under `MCP_FILE_OPS_ROOT`
+- `append_spreadsheet_rows(path, rows, has_header=True, create_if_missing=False)` → append multiple rows in one operation to `.csv`/`.tsv`/`.xlsx`
 - `list_google_calendar_events(calendar_id='primary', time_min=None, time_max=None, max_results=20)` → read existing Google Calendar events (always resolved to Eastern Time and a required time window)
 - `create_google_calendar_event(summary, start_iso, end_iso, ...)` → create a new Google Calendar event
 
@@ -254,5 +257,70 @@ Example payload:
   "path": "notes/summary.txt",
   "content": "Key findings...",
   "overwrite": false
+}
+```
+
+### `create_spreadsheet(path: str, headers: list[str] | None = None, overwrite: bool = false, delimiter: str = "comma")`
+- Creates a new spreadsheet under `MCP_FILE_OPS_ROOT`.
+- Supports `.csv`, `.tsv`, and `.xlsx` extensions.
+- Optional `headers` writes a first-row header.
+- For text files, `delimiter` accepts `comma` or `tab` (extension still controls output type for `.csv`/`.tsv`).
+
+Example payload:
+```json
+{
+  "path": "spreadsheets/new_leads.csv",
+  "headers": ["name", "email", "status"],
+  "overwrite": false
+}
+```
+
+### `edit_spreadsheet_cell(path: str, row_index: int, column: str | int, value: str, has_header: bool = true, create_if_missing: bool = false)`
+- Supports `.csv`, `.tsv`, and `.xlsx` files under `MCP_FILE_OPS_ROOT`.
+- Updates exactly one cell and writes the sheet back to disk.
+- Can create a new spreadsheet when `create_if_missing=true`.
+- `row_index` is 0-based over data rows when `has_header=true`; otherwise 0-based over all rows.
+- `column` can be a header name (string) or 0-based column index (int).
+- If a header-name column does not exist, it is added automatically.
+
+Example payload:
+```json
+{
+  "path": "spreadsheets/leads.xlsx",
+  "row_index": 2,
+  "column": "status",
+  "value": "contacted",
+  "has_header": true,
+  "create_if_missing": true
+}
+```
+
+### `append_spreadsheet_rows(path: str, rows: list[dict | list[str]], has_header: bool = true, create_if_missing: bool = false)`
+- Appends many rows in one write (faster and safer than many single-cell updates).
+- Supports `.csv`, `.tsv`, and `.xlsx`.
+- `rows` can be:
+  - list rows (positional columns), or
+  - dict rows (header-keyed values; requires `has_header=true`).
+- Missing header columns are auto-added when using dict rows.
+
+Example payload:
+```json
+{
+  "path": "schedules/master_schedule.csv",
+  "rows": [
+    {
+      "site": "Plant A",
+      "inspection_date": "2026-05-21",
+      "inspector": "A. Lee",
+      "status": "completed"
+    },
+    {
+      "site": "Plant B",
+      "inspection_date": "2026-05-22",
+      "inspector": "M. Patel",
+      "status": "completed"
+    }
+  ],
+  "has_header": true
 }
 ```
