@@ -1263,9 +1263,20 @@ def append_spreadsheet_rows(
                         sheet.cell(row=1, column=new_col, value=key)
                 new_row_idx = sheet.max_row + 1
                 for key, value in row.items():
-                    sheet.cell(row=new_row_idx, column=header_map[key], value=str(value))
+                    sheet.cell(row=new_row_idx, column=header_map[key], value="" if value is None else str(value))
             else:
-                sheet.append([str(v) for v in row])
+                list_row = ["" if v is None else str(v) for v in row]
+                if has_header and header_map:
+                    header_width = max(header_map.values())
+                    if len(list_row) > header_width:
+                        for idx in range(header_width + 1, len(list_row) + 1):
+                            generated_header = f"Column {idx}"
+                            header_map[generated_header] = idx
+                            sheet.cell(row=1, column=idx, value=generated_header)
+                        header_width = len(list_row)
+                    if len(list_row) < header_width:
+                        list_row.extend([""] * (header_width - len(list_row)))
+                sheet.append(list_row)
             appended += 1
         workbook.save(target)
         return json.dumps({"path": str(target), "rows_appended": appended, "format": "xlsx"}, indent=2)
@@ -1295,10 +1306,17 @@ def append_spreadsheet_rows(
                     header.append(key)
             values = [""] * len(header)
             for key, val in row.items():
-                values[header.index(key)] = str(val)
+                values[header.index(key)] = "" if val is None else str(val)
             output_rows.append(values)
         else:
-            output_rows.append([str(v) for v in row])
+            list_row = ["" if v is None else str(v) for v in row]
+            if has_header and header:
+                if len(list_row) > len(header):
+                    for idx in range(len(header) + 1, len(list_row) + 1):
+                        header.append(f"Column {idx}")
+                if len(list_row) < len(header):
+                    list_row.extend([""] * (len(header) - len(list_row)))
+            output_rows.append(list_row)
         appended += 1
 
     width = max((len(r) for r in output_rows), default=0)
