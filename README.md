@@ -76,6 +76,7 @@ A from-scratch local MCP server with tools for weather, SQLite reads, local file
 - `review_contract_language(path, focus=None, model='gpt-4.1-mini')` → flag potentially ambiguous/risky contract language
 - `extract_text_from_scanned_pdf(path, max_pages=20, model='gpt-4.1-mini')` → OCR scanned PDFs with vision
 - `write_text_file(path, content, overwrite=False)` → safe `.txt` writes under `MCP_FILE_OPS_ROOT`
+- `create_spreadsheet(path, headers=None, overwrite=False, delimiter='comma')` → create a new `.csv`/`.tsv`/`.xlsx` spreadsheet under `MCP_FILE_OPS_ROOT`
 - `edit_spreadsheet_cell(path, row_index, column, value, has_header=True, create_if_missing=False)` → create/edit one cell in `.csv`/`.tsv`/`.xlsx` spreadsheets under `MCP_FILE_OPS_ROOT`
 - `list_google_calendar_events(calendar_id='primary', time_min=None, time_max=None, max_results=20)` → read existing Google Calendar events (always resolved to Eastern Time and a required time window)
 - `create_google_calendar_event(summary, start_iso, end_iso, ...)` → create a new Google Calendar event
@@ -254,6 +255,21 @@ Example payload:
 {
   "path": "notes/summary.txt",
   "content": "Key findings...",
+  "overwrite": false
+}
+```
+
+### `create_spreadsheet(path: str, headers: list[str] | None = None, overwrite: bool = false, delimiter: str = "comma")`
+- Creates a new spreadsheet under `MCP_FILE_OPS_ROOT`.
+- Supports `.csv`, `.tsv`, and `.xlsx` extensions.
+- Optional `headers` writes a first-row header.
+- For text files, `delimiter` accepts `comma` or `tab` (extension still controls output type for `.csv`/`.tsv`).
+
+Example payload:
+```json
+{
+  "path": "spreadsheets/new_leads.csv",
+  "headers": ["name", "email", "status"],
   "overwrite": false
 }
 ```

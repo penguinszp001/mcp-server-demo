@@ -1025,6 +1025,65 @@ def write_text_file(path: str, content: str, overwrite: bool = False) -> str:
 
 
 @mcp.tool()
+def create_spreadsheet(
+    path: str,
+    headers: list[str] | None = None,
+    overwrite: bool = False,
+    delimiter: str = "comma",
+) -> str:
+    """Create a new empty spreadsheet (.csv/.tsv/.xlsx) under MCP_FILE_OPS_ROOT."""
+    target = _resolve_file_ops_path(path)
+    suffix = target.suffix.lower()
+    if suffix not in SUPPORTED_SPREADSHEET_EXTENSIONS:
+        raise ValueError("Only .csv, .tsv, and .xlsx files are supported.")
+    if target.exists() and not overwrite:
+        raise ValueError(f"File already exists and overwrite is false: {target}")
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    normalized_headers = headers or []
+
+    if suffix == ".xlsx":
+        workbook = Workbook()
+        sheet = workbook.active
+        if normalized_headers:
+            for index, header in enumerate(normalized_headers, start=1):
+                sheet.cell(row=1, column=index, value=header)
+        workbook.save(target)
+        return json.dumps(
+            {
+                "path": str(target),
+                "format": "xlsx",
+                "headers_written": len(normalized_headers),
+                "overwrite": overwrite,
+            },
+            indent=2,
+        )
+
+    if delimiter not in {"comma", "tab"}:
+        raise ValueError("delimiter must be either 'comma' or 'tab'.")
+    separator = "," if delimiter == "comma" else "\t"
+    if suffix == ".csv":
+        separator = ","
+    if suffix == ".tsv":
+        separator = "\t"
+
+    content = ""
+    if normalized_headers:
+        content = separator.join(normalized_headers) + "\n"
+    target.write_text(content, encoding="utf-8")
+
+    return json.dumps(
+        {
+            "path": str(target),
+            "format": "csv" if separator == "," else "tsv",
+            "headers_written": len(normalized_headers),
+            "overwrite": overwrite,
+        },
+        indent=2,
+    )
+
+
+@mcp.tool()
 def edit_spreadsheet_cell(
     path: str,
     row_index: int,
