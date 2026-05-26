@@ -1,0 +1,21 @@
+Inspection Type,Regulatory / Governance Code,Mandated Frequency,Contract Scope Status,Target Execution Window,Permit / Certification Required,Estimated Execution Window (Hours)
+HVAC Chiller Plant Audit,ASHRAE Standard 180,Semi-Annually,In Scope (Section 2.1),Pre-Summer / Pre-Winter,Operational Log Update,6.0 Hours
+Air Handling Unit Filter Rotation,Manufacturer Baseline,Monthly,In Scope (Section 2.1),First Week of Every Month,Maintenance Tag Record,2.5 Hours
+Low-Pressure Boiler Safety Check,ASME Boiler Code Section IV,Bi-Annually,In Scope (Section 2.1),Prior to Heating Season,State Boiler Inspection Certificate,4.0 Hours
+Infrared Switchgear Thermography,NFPA 70B (Electrical Maintenance),Annually,In Scope (Section 2.2),Q3 Fiscal Window,Thermographic Engineering Report,8.0 Hours
+Emergency Generator Load-Bank Test,NFPA 110 (Emergency Power),Monthly,In Scope (Section 2.2),Last Friday of Every Month,NFPA 110 Log Form,1.5 Hours
+Backflow Preventer Recertification,EPA Cross-Connection Mandate,Annually,In Scope (Section 2.3),Prior to June 1st Deadline,State Backflow Assembly Certified Seal,2.0 Hours
+Main Sewer Line Scoping,Municipal Sanitation Code,Semi-Annually,In Scope (Section 2.3),Spring / Autumn Cycles,Digital Scoping Footage Archive,5.0 Hours
+Roof Membrane & Flashing Review,ASTM D4434 Standards,Quarterly,In Scope (Section 2.4),End of Quarter Audits,Roof Condition Assessment Filing,3.0 Hours
+Building Automation Calibration,Standard Operating Procedure,Weekly,In Scope (Section 2.1),Every Monday Morning,BAS Software Logic Receipt,1.0 Hours
+Elevator Category 1 Safety Testing,ASME A17.1 (Elevator Safety),Annually,OUT OF SCOPE (Third Party),By Anniversary of Commissioning,State Bureau of Elevator Safety Certificate,12.0 Hours
+Fire Alarm & Smoke Detector Matrix,NFPA 72 (National Fire Alarm Code),Annually,OUT OF SCOPE (Third Party),Q1 Safety Shutdown Window,Municipal Fire Marshal Safety Stamp,16.0 Hours
+Commercial Kitchen Grease Trap Audit,FDA Food Code / Local Health,Quarterly,OUT OF SCOPE (Tenant Managed),End of Operational Quarter,Board of Health Compliance Sign-off,3.5 Hours
+Main Fire Pump Flow Performance,NFPA 20 (Fire Pump Systems),Annually,OUT OF SCOPE (Third Party),Before October 31st,Underwriters Laboratories (UL) Field Report,4.5 Hours
+ADA Egress Compliance Walkthrough,ADA Title III Regulations,Annually,OUT OF SCOPE (Internal Management),Prior to Annual Corporate Lease Reviews,ADA Title III Survey Document,4.0 Hours
+Potable Water Legionella Testing,CDC Environmental Guidelines,Quarterly,OUT OF SCOPE (Third Party),Staggered Quarterly Testing,Certified Laboratory Analysis Report,2.0 Hours
+Egress Emergency Lighting Load Test,NFPA 101 (Life Safety Code),Annually,In Scope (Section 2.2),During Low-Occupancy Weekend,Life Safety Egress Field Certification,6.5 Hours
+Parking Garage Structural Core Scan,IBC Chapter 16 (Structural),Every 5 Years,OUT OF SCOPE (Structural Engineering),Q2 Scheduled Structural Window,PE Structural Endorsement Seal,24.0 Hours
+Central Radon Level Screening,EPA Radon Mitigation Act,Tri-Annually,OUT OF SCOPE (Environmental),Mid-Winter Baseline Cycle,Certified Radon Metric Report,48.0 Hours
+Exterior Window Washing Rig Safety Certification,OSHA 1910.27 (Walking-Working Surfaces),Annually,OUT OF SCOPE (Vendor Independent),Prior to High-Season Cleaning Operations,OSHA Rig Competency Certification Sticker,8.0 Hours
+Hazardous Waste Storage Area Review,RCRA Subtitle C Requirements,Monthly,OUT OF SCOPE (EHS Compliance),Mid-Month Compliance Cycle,EPA Hazardous Waste Manifest Manifest,1.5 Hours

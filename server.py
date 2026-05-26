@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import sqlite3
+import csv
 import threading
 import time
 import base64
@@ -1161,8 +1162,8 @@ def edit_spreadsheet_cell(
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("", encoding="utf-8")
 
-    lines = target.read_text(encoding="utf-8").splitlines()
-    rows = [line.split(delimiter) for line in lines] if lines else []
+    with target.open("r", encoding="utf-8", newline="") as handle:
+        rows = list(csv.reader(handle, delimiter=delimiter))
 
     if row_index < 0:
         raise ValueError("row_index must be >= 0.")
@@ -1202,10 +1203,9 @@ def edit_spreadsheet_cell(
 
     width = max((len(r) for r in rows), default=0)
     normalized_rows = [r + [""] * (width - len(r)) for r in rows]
-    out = "\n".join(delimiter.join(r) for r in normalized_rows)
-    if out:
-        out += "\n"
-    target.write_text(out, encoding="utf-8")
+    with target.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle, delimiter=delimiter)
+        writer.writerows(normalized_rows)
 
     return json.dumps(
         {
@@ -1217,6 +1217,98 @@ def edit_spreadsheet_cell(
             "rows_written": len(normalized_rows),
             "delimiter": "csv" if delimiter == "," else "tsv",
         },
+        indent=2,
+    )
+
+
+@mcp.tool()
+def append_spreadsheet_rows(
+    path: str,
+    rows: list[dict[str, Any] | list[str]],
+    has_header: bool = True,
+    create_if_missing: bool = False,
+) -> str:
+    """Append many rows in one operation to avoid repeated per-cell edits."""
+    if not rows:
+        raise ValueError("rows must include at least one row.")
+    target = _resolve_file_ops_path(path)
+    suffix = target.suffix.lower()
+    if suffix not in SUPPORTED_SPREADSHEET_EXTENSIONS:
+        raise ValueError("Only .csv, .tsv, and .xlsx files are supported.")
+
+    if suffix == ".xlsx":
+        if not target.exists():
+            if not create_if_missing:
+                raise ValueError(f"Spreadsheet does not exist: {target}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            Workbook().save(target)
+        workbook = load_workbook(target)
+        sheet = workbook.active
+        appended = 0
+        header_map: dict[str, int] = {}
+        if has_header:
+            max_col = max(sheet.max_column, 1)
+            for col in range(1, max_col + 1):
+                header_value = sheet.cell(row=1, column=col).value
+                if header_value is not None and str(header_value):
+                    header_map[str(header_value)] = col
+        for row in rows:
+            if isinstance(row, dict):
+                if not has_header:
+                    raise ValueError("Dict rows require has_header=True.")
+                for key in row.keys():
+                    if key not in header_map:
+                        new_col = (max(header_map.values()) if header_map else 0) + 1
+                        header_map[key] = new_col
+                        sheet.cell(row=1, column=new_col, value=key)
+                new_row_idx = sheet.max_row + 1
+                for key, value in row.items():
+                    sheet.cell(row=new_row_idx, column=header_map[key], value=str(value))
+            else:
+                sheet.append([str(v) for v in row])
+            appended += 1
+        workbook.save(target)
+        return json.dumps({"path": str(target), "rows_appended": appended, "format": "xlsx"}, indent=2)
+
+    delimiter = "," if suffix == ".csv" else "\t"
+    if not target.exists():
+        if not create_if_missing:
+            raise ValueError(f"Spreadsheet does not exist: {target}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("", encoding="utf-8")
+
+    with target.open("r", encoding="utf-8", newline="") as handle:
+        existing_rows = list(csv.reader(handle, delimiter=delimiter))
+
+    header: list[str] = existing_rows[0] if (has_header and existing_rows) else []
+    output_rows = existing_rows[:]
+    appended = 0
+    for row in rows:
+        if isinstance(row, dict):
+            if not has_header:
+                raise ValueError("Dict rows require has_header=True.")
+            if not output_rows:
+                output_rows.append([])
+                header = output_rows[0]
+            for key in row.keys():
+                if key not in header:
+                    header.append(key)
+            values = [""] * len(header)
+            for key, val in row.items():
+                values[header.index(key)] = str(val)
+            output_rows.append(values)
+        else:
+            output_rows.append([str(v) for v in row])
+        appended += 1
+
+    width = max((len(r) for r in output_rows), default=0)
+    normalized_rows = [r + [""] * (width - len(r)) for r in output_rows]
+    with target.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle, delimiter=delimiter)
+        writer.writerows(normalized_rows)
+
+    return json.dumps(
+        {"path": str(target), "rows_appended": appended, "format": "csv" if delimiter == "," else "tsv"},
         indent=2,
     )
 

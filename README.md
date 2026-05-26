@@ -78,6 +78,7 @@ A from-scratch local MCP server with tools for weather, SQLite reads, local file
 - `write_text_file(path, content, overwrite=False)` → safe `.txt` writes under `MCP_FILE_OPS_ROOT`
 - `create_spreadsheet(path, headers=None, overwrite=False, delimiter='comma')` → create a new `.csv`/`.tsv`/`.xlsx` spreadsheet under `MCP_FILE_OPS_ROOT`
 - `edit_spreadsheet_cell(path, row_index, column, value, has_header=True, create_if_missing=False)` → create/edit one cell in `.csv`/`.tsv`/`.xlsx` spreadsheets under `MCP_FILE_OPS_ROOT`
+- `append_spreadsheet_rows(path, rows, has_header=True, create_if_missing=False)` → append multiple rows in one operation to `.csv`/`.tsv`/`.xlsx`
 - `list_google_calendar_events(calendar_id='primary', time_min=None, time_max=None, max_results=20)` → read existing Google Calendar events (always resolved to Eastern Time and a required time window)
 - `create_google_calendar_event(summary, start_iso, end_iso, ...)` → create a new Google Calendar event
 
@@ -291,5 +292,35 @@ Example payload:
   "value": "contacted",
   "has_header": true,
   "create_if_missing": true
+}
+```
+
+### `append_spreadsheet_rows(path: str, rows: list[dict | list[str]], has_header: bool = true, create_if_missing: bool = false)`
+- Appends many rows in one write (faster and safer than many single-cell updates).
+- Supports `.csv`, `.tsv`, and `.xlsx`.
+- `rows` can be:
+  - list rows (positional columns), or
+  - dict rows (header-keyed values; requires `has_header=true`).
+- Missing header columns are auto-added when using dict rows.
+
+Example payload:
+```json
+{
+  "path": "schedules/master_schedule.csv",
+  "rows": [
+    {
+      "site": "Plant A",
+      "inspection_date": "2026-05-21",
+      "inspector": "A. Lee",
+      "status": "completed"
+    },
+    {
+      "site": "Plant B",
+      "inspection_date": "2026-05-22",
+      "inspector": "M. Patel",
+      "status": "completed"
+    }
+  ],
+  "has_header": true
 }
 ```

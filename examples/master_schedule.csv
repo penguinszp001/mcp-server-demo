@@ -1,0 +1,21 @@
+Inspection Date,Asset / System Inspected,Inspection Result,Facility Location,Assigned Lead Technician,Required Action / Remediation,Next Scheduled Inspection
+2025-01-15,Main Switchgear Panel A,Passed,Basement Main Electrical Room,Chief Stationary Engineer,None. Routine logging complete.,2026-01-15
+2025-01-20,Domestic Water Booster Pumps,Passed,Sub-Basement Pump Suite,General Facilities Tech,None. Pressure values normal.,2025-04-20
+2025-02-10,Air Handling Unit (AHU-1),Passed,Mezzanine Mechanical Level,General Facilities Tech,Replaced MERV 13 filters.,2025-05-10
+2025-02-15,Cooling Tower Basin & Fans,Failed - Algae Build-up,Roof Level Northeast,Chief Stationary Engineer,Chemical wash & disinfection executed.,2025-09-15
+2025-03-05,Low-Pressure Steam Boiler Array,Passed,Basement Boiler Plant Room,Chief Stationary Engineer,None. Flue gas parameters optimal.,2025-09-05
+2025-03-20,Emergency Egress Lighting Matrix,Passed,All Egress Corridors & Stairwells,General Facilities Tech,Replaced 4 burnt emergency ballasts.,2025-04-03
+2025-04-12,Roof Area Section A,Passed,Roof Level North Quad,General Facilities Tech,Cleared minor debris from overflow scuppers.,2025-07-12
+2025-04-18,Fire Backflow Prevention Assembly,Passed,Main Water Vault - Exterior,General Facilities Tech,State certification tags updated & filed.,2026-04-18
+2025-05-02,Building Automation System (BAS),Passed,12th Floor Operations Desk,Chief Stationary Engineer,None. DDC control logic operating normal.,2025-05-09
+2025-05-15,Sewage Ejector Pit Arrays,Passed,Sub-Basement Sump Pit,General Facilities Tech,Float switch cleared and recalibrated.,2025-08-15
+2025-06-10,Main Switchgear Panel B,Failed - Thermal Anomaly,Basement Main Electrical Room,Chief Stationary Engineer,Replaced loose lug connection and re-scanned.,2026-06-10
+2025-06-22,Air Handling Unit (AHU-2),Passed,6th Floor Mechanical Closet,General Facilities Tech,Replaced standard system drive belts.,2025-09-22
+2025-07-05,Parking Structure LED Controls,Passed,Multi-Level Parking Structure,General Facilities Tech,None. Photo-eye sensors operational.,2025-08-19
+2025-07-19,750kW Emergency Backup Generator,Passed,Rear Exterior Generator Pad,Chief Stationary Engineer,Completed monthly load-bank testing.,2025-09-19
+2025-08-11,Roof Area Section B,Passed,Roof Level South Quad,General Facilities Tech,Cleared gravel from drainage strainers.,2025-11-11
+2025-08-25,Horizontal Waste Lines (Scoping),Passed,Lower Horizontal Mainlines,General Facilities Tech,None. Line cleared via hydro-jetting.,2026-03-08
+2025-09-08,Centrifugal Chiller Plant,Passed,Basement Chiller Plant Room,Chief Stationary Engineer,Logged refrigerant metrics and fluid levels.,2026-03-17
+2025-09-22,Air Handling Unit (AHU-3),Failed - Blown Drive Belt,9th Floor Mechanical Closet,General Facilities Tech,Installed replacement drive belt assembly.,2025-12-18
+2025-10-05,Exterior Shell Expansion Joints,Passed,Exterior Facade - North Wall,General Facilities Tech,None. Sealing caulk intact.,2026-04-05
+2026-05-26,Roof Area Section C,Failed - Structural Breach,Roof Level Section C (Over IT),Chief Stationary Engineer,Escalated to Management. Requires structural change order.,Pending CO Approval
